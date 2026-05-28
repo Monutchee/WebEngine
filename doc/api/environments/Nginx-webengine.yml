@@ -1,0 +1,6 @@
+name: Nginx-webengine
+variables:
+  - name: ipAddr
+    value: 127.0.0.1
+  - name: port
+    value: "8443"

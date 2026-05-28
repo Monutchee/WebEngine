@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nginx + Beast PoC</title>
+  <style>
+    body  { font-family: sans-serif; max-width: 420px; margin: 60px auto; padding: 0 20px; }
+    h1    { font-size: 1.3rem; margin-bottom: 1.5rem; }
+    h2    { font-size: 1rem; margin: 1.8rem 0 .6rem; color: #444; }
+    input {
+      display: block; width: 100%; margin: 8px 0;
+      padding: 8px 10px; box-sizing: border-box;
+      border: 1px solid #ccc; border-radius: 4px;
+    }
+    button {
+      padding: 8px 20px; border: none; border-radius: 4px;
+      cursor: pointer; color: #fff; background: #0066cc;
+    }
+    button.secondary { background: #555; margin-top: 8px; }
+    pre   { background: #f4f4f4; padding: 10px; border-radius: 4px; font-size: .85rem; white-space: pre-wrap; }
+    .err  { color: #c00; margin-top: 8px; display: none; }
+  </style>
+</head>
+<body>
+  <h1>Nginx + Beast PoC</h1>
+
+  <!-- ── Login ── -->
+  <form id="login-form">
+    <input type="text"     id="username" placeholder="Username" autocomplete="username" required>
+    <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
+    <button type="submit">Login</button>
+    <div class="err" id="login-err">Invalid credentials. Try again.</div>
+  </form>
+
+  <!-- ── Public API (no login needed) ── -->
+  <h2>Public API <small style="color:#888">(no login needed)</small></h2>
+  <button class="secondary" id="btn-public">GET /api/public</button>
+  <pre id="out-public">—</pre>
+
+  <script>
+    if (new URLSearchParams(location.search).get('reason') === 'unauthenticated') {
+      const e = document.getElementById('login-err');
+      e.textContent = 'Session expired or not logged in.';
+      e.style.display = 'block';
+    }
+
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = document.getElementById('login-err');
+      err.style.display = 'none';
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            username: document.getElementById('username').value,
+            password: document.getElementById('password').value,
+          }),
+        });
+        if (res.ok) { window.location.href = '/protected/dashboard.html'; }
+        else { err.textContent = 'Invalid credentials.'; err.style.display = 'block'; }
+      } catch {
+        err.textContent = 'Network error.'; err.style.display = 'block';
+      }
+    });
+
+    document.getElementById('btn-public').addEventListener('click', async () => {
+      const out = document.getElementById('out-public');
+      try {
+        const res = await fetch('/api/public');
+        out.textContent = `HTTP ${res.status}\n` + JSON.stringify(await res.json(), null, 2);
+      } catch (e) { out.textContent = 'Error: ' + e.message; }
+    });
+  </script>
+</body>
+</html>
