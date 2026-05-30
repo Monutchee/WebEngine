@@ -1,34 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-# Mimic what the systemd units do, in the same order.
-# On the embedded target, replace this container with the actual .service files.
+# The C++ backend is now the single foreground process: it starts, controls and
+# stops nginx itself via webengine::NginxController. The container runs as the
+# www-data service user (docker-compose `user:`), and tini (compose `init: true`)
+# reaps the nginx daemon. On the embedded target, run the backend under its own
+# systemd unit instead and drop nginx's service unit — the backend owns nginx.
 
-cleanup() {
-    echo "entrypoint: stopping services"
-    kill "$NGINX_PID" "$BACKEND_PID" 2>/dev/null || true
-    wait "$NGINX_PID" "$BACKEND_PID" 2>/dev/null || true
-}
-trap cleanup SIGTERM SIGINT
+# Clean any stale runtime state from a previous run.
+rm -f /tmp/backend.sock /tmp/nginx.pid
+mkdir -p /tmp/nginx
 
-# ── beast-backend (mirrors ExecStartPre + ExecStart in beast-backend.service) ─
-rm -f /tmp/backend.sock
-su -s /bin/sh www-data -c '/usr/local/bin/backend' &
-BACKEND_PID=$!
-
-echo "entrypoint: waiting for /tmp/backend.sock"
-until [ -S /tmp/backend.sock ]; do
-    kill -0 "$BACKEND_PID" 2>/dev/null || { echo "entrypoint: backend died"; exit 1; }
-    sleep 0.1
-done
-echo "entrypoint: backend ready"
-
-# ── nginx (mirrors the nginx.service.d wait-for-backend.conf logic) ───────────
-nginx -g 'daemon off;' &
-NGINX_PID=$!
-echo "entrypoint: nginx started (pid $NGINX_PID)"
-
-# Exit if either process dies so Docker can restart the container.
-wait -n "$BACKEND_PID" "$NGINX_PID"
-echo "entrypoint: a process exited, shutting down"
-cleanup
+exec /usr/local/bin/backend

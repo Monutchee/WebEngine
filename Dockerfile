@@ -43,11 +43,24 @@ RUN mkdir -p /etc/nginx/ssl \
 COPY --from=builder /src/build/backend /usr/local/bin/backend
 RUN chmod 755 /usr/local/bin/backend
 
-COPY www/          /www/
+COPY www/             /www/
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
-COPY entrypoint.sh /entrypoint.sh
+COPY nginx/conf.d/    /etc/nginx/conf.d/
+COPY entrypoint.sh    /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE 80 443
+# nginx runs as the unprivileged service user (www-data) so the same-user C++
+# backend can control it. Give that user what it needs to read/rewrite:
+#   • conf.d  — NginxController rewrites conf.d/listen.conf at runtime
+#   • ssl     — the non-root master must be able to read the cert + key
+#   • runtime dirs for the pidfile and temp paths (see nginx.conf)
+RUN chown -R www-data:www-data /etc/nginx/conf.d /etc/nginx/ssl \
+    && chmod 640 /etc/nginx/ssl/server.key \
+    && mkdir -p /tmp/nginx \
+    && chown www-data:www-data /tmp/nginx /var/lib/nginx 2>/dev/null || true
+
+# High ports nginx binds as a non-root user (see conf.d/listen.conf). The 8080-8085
+# range matches the runtime-changeable HTTP range published by docker-compose.
+EXPOSE 8080-8085 8443
 
 ENTRYPOINT ["/entrypoint.sh"]
