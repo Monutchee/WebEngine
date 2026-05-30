@@ -1,54 +1,21 @@
 #pragma once
-#include <utility>               // must precede boost — Boost 1.74 awaitable.hpp uses std::exchange without including <utility>
-#include <boost/beast/core.hpp>
-#include <boost/beast/http.hpp>
+#include <optional>
 #include <string>
 
+#include "webengine/Http.hpp"
+#include "TokenStore.hpp"
+
+namespace webengine {
+
 namespace beast = boost::beast;
-namespace http  = beast::http;
 
-// Boost 1.74 uses boost::beast::string_view (boost::basic_string_view<char>),
-// not std::string_view. Use beast::string_view throughout to stay compatible.
+// Internal helpers shared by the router and the built-in auth handlers.
+//
+// Boost 1.74 header field values are boost::beast::string_view (not
+// std::string_view); there is no implicit conversion between the two, so these
+// helpers work in terms of beast::string_view.
 
-inline http::response<http::string_body>
-make_response(http::status status, std::string body,
-              beast::string_view content_type = "text/plain")
-{
-    http::response<http::string_body> res{status, 11};
-    res.set(http::field::content_type, content_type);
-    res.body() = std::move(body);
-    res.prepare_payload();
-    return res;
-}
-
-inline http::response<http::string_body>
-make_json_response(http::status status, std::string body) {
-    return make_response(status, std::move(body), "application/json");
-}
-
-inline http::response<http::string_body>
-make_status_response(http::status status) {
-    http::response<http::string_body> res{status, 11};
-    res.prepare_payload();
-    return res;
-}
-
-inline std::string extract_json_field(const std::string& json,
-                                       const std::string& field)
-{
-    std::string key = "\"" + field + "\"";
-    auto pos = json.find(key);
-    if (pos == std::string::npos) return {};
-    pos = json.find(':', pos + key.size());
-    if (pos == std::string::npos) return {};
-    pos = json.find('"', pos + 1);
-    if (pos == std::string::npos) return {};
-    ++pos;
-    auto end = json.find('"', pos);
-    if (end == std::string::npos) return {};
-    return json.substr(pos, end - pos);
-}
-
+// Extracts the value of cookie `name` from a Cookie header. Returns "" if absent.
 inline std::string extract_cookie(beast::string_view cookie_header,
                                    beast::string_view name)
 {
@@ -64,3 +31,33 @@ inline std::string extract_cookie(beast::string_view cookie_header,
     while (!val.empty() && val.back()  == ' ') val.remove_suffix(1);
     return std::string(val.data(), val.size());
 }
+
+// Pulls the session token from a request: a "session" cookie first, then an
+// "Authorization: Bearer <token>" header. Returns "" if neither is present.
+inline std::string extract_token(const Request& req) {
+    auto cookie_it = req.find(http::field::cookie);
+    if (cookie_it != req.end()) {
+        std::string token = extract_cookie(cookie_it->value(), "session");
+        if (!token.empty()) return token;
+    }
+
+    auto auth_it = req.find(http::field::authorization);
+    if (auth_it != req.end()) {
+        auto hv = auth_it->value(); // beast::string_view
+        // beast::string_view has no starts_with() in Boost 1.74; use substr compare.
+        if (hv.size() >= 7 && hv.substr(0, 7) == "Bearer ")
+            return std::string(hv.data() + 7, hv.size() - 7);
+    }
+    return {};
+}
+
+// Resolves and validates the session token on a request to its store entry.
+// Returns std::nullopt if there is no token or it is invalid/expired.
+inline std::optional<TokenEntry>
+validated_token(const Request& req, const TokenStore& tokens) {
+    std::string token = extract_token(req);
+    if (token.empty()) return std::nullopt;
+    return tokens.validate(token);
+}
+
+} // namespace webengine

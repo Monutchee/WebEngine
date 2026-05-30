@@ -6,11 +6,13 @@
 #include <memory>
 #include "Router.hpp"
 
+namespace webengine {
+
 namespace beast = boost::beast;
-namespace http  = beast::http;
 namespace asio  = boost::asio;
 using     uds   = asio::local::stream_protocol;
 
+// One HTTP keep-alive conversation over an accepted UDS connection.
 class Session : public std::enable_shared_from_this<Session> {
 public:
     Session(uds::socket socket, Router& router);
@@ -18,10 +20,12 @@ public:
 
 private:
     void do_read();
-    void do_write(http::response<http::string_body> res, bool keep_alive);
+    void do_write(Response res, bool keep_alive);
 
-    uds::socket                      socket_;
-    beast::flat_buffer               buffer_;
-    http::request<http::string_body> req_;
-    Router&                          router_;
+    uds::socket        socket_;
+    beast::flat_buffer buffer_;
+    Request            req_;
+    Router&            router_;
 };
+
+} // namespace webengine

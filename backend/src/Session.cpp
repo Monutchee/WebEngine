@@ -1,5 +1,7 @@
 #include "Session.hpp"
 
+namespace webengine {
+
 Session::Session(uds::socket socket, Router& router)
     : socket_(std::move(socket)), router_(router) {}
 
@@ -27,10 +29,10 @@ void Session::do_read()
         });
 }
 
-void Session::do_write(http::response<http::string_body> res, bool keep_alive)
+void Session::do_write(Response res, bool keep_alive)
 {
     auto self = shared_from_this();
-    auto sp   = std::make_shared<http::response<http::string_body>>(std::move(res));
+    auto sp   = std::make_shared<Response>(std::move(res));
     http::async_write(socket_, *sp,
         [self, sp, keep_alive](beast::error_code ec, std::size_t)
         {
@@ -43,3 +45,5 @@ void Session::do_write(http::response<http::string_body> res, bool keep_alive)
             }
         });
 }
+
+} // namespace webengine
