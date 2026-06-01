@@ -95,6 +95,13 @@ public:
     // Worker thread count for the I/O event loop. Default: hardware concurrency.
     WebEngine& set_threads(unsigned n);
 
+    // Install graceful-shutdown handling for SIGINT/SIGTERM: when one arrives,
+    // run() returns. This uses Boost.Asio's signal_set (the completion runs as a
+    // normal in-loop handler), which is the correct, async-signal-safe approach —
+    // prefer it over a std::signal handler that calls stop() directly. Call before
+    // run().
+    WebEngine& enable_signal_shutdown();
+
     // ── Lifecycle ───────────────────────────────────────────────────────────────
 
     // Bind the socket and run the event loop. Blocks until stop() is called or a
@@ -102,7 +109,8 @@ public:
     void run();
 
     // Ask the event loop to stop; run() returns shortly after. Safe to call from
-    // another thread or a signal handler.
+    // another thread. NOT async-signal-safe — do not call directly from a POSIX
+    // signal handler; use enable_signal_shutdown() for signal-driven shutdown.
     void stop();
 
 private:

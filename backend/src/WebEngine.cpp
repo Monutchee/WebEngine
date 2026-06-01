@@ -1,9 +1,13 @@
 #include "webengine/WebEngine.hpp"
 
 #include <algorithm>
+#include <csignal>
+#include <memory>
 #include <stdexcept>
 #include <thread>
 #include <vector>
+
+#include <boost/asio/signal_set.hpp>
 
 #include <unistd.h>          // ::unlink
 
@@ -56,6 +60,7 @@ struct WebEngine::Impl {
 
     asio::io_context              ioc;
     std::shared_ptr<Listener>     listener;
+    std::unique_ptr<asio::signal_set> signals;   // optional SIGINT/SIGTERM shutdown
 };
 
 // ── Construction / lifetime ────────────────────────────────────────────────────
@@ -211,6 +216,18 @@ WebEngine& WebEngine::set_socket_path(std::string path)
 WebEngine& WebEngine::set_threads(unsigned n)
 {
     impl_->num_threads = n;
+    return *this;
+}
+
+WebEngine& WebEngine::enable_signal_shutdown()
+{
+    Impl& impl = *impl_;
+    impl.signals = std::make_unique<asio::signal_set>(impl.ioc, SIGINT, SIGTERM);
+    // The completion runs as an ordinary handler inside run() — no cross-context
+    // call into stop() from signal-handler context.
+    impl.signals->async_wait([&impl](const boost::system::error_code& ec, int) {
+        if (!ec) impl.ioc.stop();
+    });
     return *this;
 }
 

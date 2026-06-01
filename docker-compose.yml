@@ -5,7 +5,21 @@ services:
       dockerfile: Dockerfile
     image: nginx-beast-poc:latest
     container_name: nginx-beast-poc
+    # Run as the unprivileged service user so the C++ backend and nginx share a
+    # uid (lets the backend signal/reload nginx without root or capabilities).
+    user: "www-data"
+    # tini as PID 1 reaps the nginx daemon the backend spawns.
+    init: true
+    # The /api/admin/nginx/port endpoint only accepts ports the host can actually
+    # reach — i.e. the published range below. (Unset on embedded = full 1-65535.)
+    environment:
+      WEBENGINE_HTTP_PORT_MIN: "8080"
+      WEBENGINE_HTTP_PORT_MAX: "8085"
+    # 1:1 port mapping over a small range: when NginxController changes the listen
+    # port at runtime (e.g. to 8082), the same host port reaches it. HTTPS at 8443.
+    # On the embedded target there is no Docker layer — nginx binds the NIC port
+    # directly and runtime changes need no host-side remap.
     ports:
-      - "0.0.0.0:8080:80"    # HTTP
-      - "0.0.0.0:8443:443"   # HTTPS (self-signed cert — browser will warn)
+      - "0.0.0.0:8080-8085:8080-8085"   # HTTP  (default 8080, runtime-changeable)
+      - "0.0.0.0:8443:8443"             # HTTPS (self-signed cert — browser will warn)
     restart: unless-stopped
