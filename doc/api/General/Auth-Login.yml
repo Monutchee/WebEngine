@@ -1,0 +1,21 @@
+info:
+  name: Auth/Login
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: https://{{ipAddr}}:{{port}}/api/login
+  body:
+    type: json
+    data: |-
+      {
+          "username": "admin"
+          "password": "admin123"
+      }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

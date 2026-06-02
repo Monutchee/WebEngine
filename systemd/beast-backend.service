@@ -1,0 +1,16 @@
+[Unit]
+Description=Boost.Beast API backend
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+# Remove stale socket on every start so bind() never sees EADDRINUSE.
+ExecStartPre=/bin/rm -f /tmp/backend.sock
+ExecStart=/usr/local/bin/backend
+Restart=on-failure
+RestartSec=1s
+
+[Install]
+WantedBy=multi-user.target

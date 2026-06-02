@@ -1,0 +1,1 @@
+Hello! You are authenticated and authorised to see this file.

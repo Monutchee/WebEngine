@@ -1,0 +1,7 @@
+info:
+  name: Simple Auto Test
+  type: folder
+  seq: 2
+
+request:
+  auth: inherit

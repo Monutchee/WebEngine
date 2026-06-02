@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard (Protected)</title>
+  <style>
+    body   { font-family: sans-serif; max-width: 540px; margin: 60px auto; padding: 0 20px; }
+    h1     { font-size: 1.4rem; }
+    h2     { font-size: 1rem; margin: 1.8rem 0 .6rem; color: #444; }
+    .badge { display: inline-block; background: #0a0; color: #fff; padding: 2px 9px; border-radius: 4px; font-size: .8rem; }
+    button {
+      padding: 8px 18px; border: none; border-radius: 4px;
+      cursor: pointer; color: #fff; background: #0066cc; margin-right: 8px;
+    }
+    button.danger { background: #c00; }
+    pre    { background: #f4f4f4; padding: 10px; border-radius: 4px; font-size: .85rem; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Dashboard <span class="badge">Protected</span></h1>
+  <p>You have accessed a protected resource gated by nginx <code>auth_request</code>.</p>
+
+  <!-- ── Public API ── -->
+  <h2>Public API <small style="color:#888">(no auth needed)</small></h2>
+  <button id="btn-public">GET /api/public</button>
+  <pre id="out-public">—</pre>
+
+  <!-- ── Private API ── -->
+  <h2>Private API <small style="color:#888">(auth enforced by backend)</small></h2>
+  <button id="btn-private">GET /api/private</button>
+  <pre id="out-private">—</pre>
+
+  <h2></h2>
+  <button class="danger" id="btn-logout">Logout</button>
+
+  <script>
+    async function call(url, outId) {
+      const out = document.getElementById(outId);
+      try {
+        const res = await fetch(url, { credentials: 'same-origin' });
+        out.textContent = `HTTP ${res.status}\n` + JSON.stringify(await res.json(), null, 2);
+      } catch (e) { out.textContent = 'Error: ' + e.message; }
+    }
+
+    document.getElementById('btn-public') .addEventListener('click', () => call('/api/public',  'out-public'));
+    document.getElementById('btn-private').addEventListener('click', () => call('/api/private', 'out-private'));
+
+    document.getElementById('btn-logout').addEventListener('click', async () => {
+      await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
+      window.location.href = '/';
+    });
+  </script>
+</body>
+</html>
