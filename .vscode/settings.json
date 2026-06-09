@@ -1,0 +1,7 @@
+{
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}/backend/build",
+        "--background-index",
+        "--header-insertion=never"
+    ]
+}

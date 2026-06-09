@@ -55,23 +55,7 @@ inline Response status_response(http::status status) {
     return res;
 }
 
-// ── Request parsing helpers ────────────────────────────────────────────────────
-
-// Extracts a top-level string field from a flat JSON object body. Returns "" if
-// absent. Deliberately minimal — adequate for the demo's small payloads, not a
-// general-purpose JSON parser.
-inline std::string json_field(const std::string& json_body, const std::string& field) {
-    std::string key = "\"" + field + "\"";
-    auto pos = json_body.find(key);
-    if (pos == std::string::npos) return {};
-    pos = json_body.find(':', pos + key.size());
-    if (pos == std::string::npos) return {};
-    pos = json_body.find('"', pos + 1);
-    if (pos == std::string::npos) return {};
-    ++pos;
-    auto end = json_body.find('"', pos);
-    if (end == std::string::npos) return {};
-    return json_body.substr(pos, end - pos);
-}
+// JSON bodies are (de)serialised with glaze directly in the handlers
+// (glz::read / glz::write_json); json() above just wraps the result in a Response.
 
 } // namespace webengine

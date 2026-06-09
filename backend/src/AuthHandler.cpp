@@ -2,11 +2,17 @@
 #include "util.hpp"
 
 #include <fstream>
+#include <optional>
 #include <sstream>
+
+#include <glaze/glaze.hpp>
 
 namespace webengine {
 
 namespace {
+
+// Login request body: {"username": ..., "password": ...}.
+struct LoginReq { std::optional<std::string> username; std::optional<std::string> password; };
 
 // Minimal extension → MIME map for the static files this PoC serves. Unknown
 // extensions fall back to a safe binary default.
@@ -29,13 +35,17 @@ std::string content_type_for(const std::string& path) {
 
 Response AuthHandler::handle_login(const Request& req)
 {
-    const std::string& body = req.body();
-    std::string username = json_field(body, "username");
-    std::string password = json_field(body, "password");
+    LoginReq body{};
+    // Tolerate missing/garbage bodies: on a parse error the fields stay empty and
+    // the credential check below fails with 401, as before.
+    (void) glz::read<glz::opts{.error_on_unknown_keys = false}>(body, req.body());
+    const std::string username = body.username ? *body.username : std::string{};
+    const std::string password = body.password ? *body.password : std::string{};
 
     std::optional<Role> role;
     if (username.empty() || !(role = auth_.authenticate(username, password)))
-        return json(http::status::unauthorized, R"({"error":"invalid credentials"})");
+        return json(http::status::unauthorized,
+            glz::write_json(glz::obj{"error", "invalid credentials"}).value_or(std::string{}));
 
     std::string token = tokens_.issue(username, *role);
 

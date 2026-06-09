@@ -1,6 +1,8 @@
 #include "Router.hpp"
 #include "util.hpp"
 
+#include <glaze/glaze.hpp>
+
 namespace webengine {
 
 void Router::add_route(http::verb method, std::string path, Handler handler,
@@ -77,10 +79,10 @@ Response Router::dispatch(const Request& req) const
         auto entry = validated_token(req, tokens_);
         if (!entry)
             return json(http::status::unauthorized,
-                        R"({"error":"authentication required"})");
+                glz::write_json(glz::obj{"error", "authentication required"}).value_or(std::string{}));
         if (!role_satisfies(entry->role, *min_role))
             return json(http::status::forbidden,
-                        R"({"error":"insufficient permissions"})");
+                glz::write_json(glz::obj{"error", "insufficient permissions"}).value_or(std::string{}));
         ctx.user = UserInfo{entry->username, entry->role};
     }
 
@@ -91,7 +93,7 @@ Response Router::dispatch(const Request& req) const
         return handler(ctx);
     } catch (...) {
         return json(http::status::internal_server_error,
-                    R"({"error":"internal server error"})");
+            glz::write_json(glz::obj{"error", "internal server error"}).value_or(std::string{}));
     }
 }
 

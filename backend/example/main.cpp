@@ -9,11 +9,13 @@
 // ("nginx" — default — or "lighttpd"); the rest of this file is server-agnostic
 // because it only ever touches the WebServerController interface.
 
-#include <cctype>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
+
+#include <glaze/glaze.hpp>
 
 #include <webengine/TestAuthProvider.hpp>
 #include <webengine/WebEngine.hpp>
@@ -23,12 +25,17 @@ using namespace webengine;
 
 namespace {
 
+// Request bodies for the web-server control endpoints.
+struct ForceReq { std::optional<bool> force; };   // {"force": true}
+struct PortReq  { std::optional<int>  http;  };   // {"http": <port>}
+
 // Small helper for the web-server admin endpoints.
 Response server_result(bool ok, const WebServerController& srv) {
-    return ok ? json(http::status::ok, R"({"status":"ok"})")
-              : json(http::status::internal_server_error,
-                     std::string(R"({"error":"web server command failed","detail":")")
-                     + srv.last_error() + R"("})");
+    if (ok) return json(http::status::ok, R"({"status":"ok"})");
+    const std::string detail = srv.last_error();
+    return json(http::status::internal_server_error,
+                glz::write_json(glz::obj{"error", "web server command failed", "detail", detail})
+                    .value_or(std::string{R"({"error":"web server command failed"})"}));
 }
 
 int env_int(const char* name, int fallback) {
@@ -41,26 +48,6 @@ int env_int(const char* name, int fallback) {
 std::string env_str(const char* name, const char* fallback) {
     if (const char* v = std::getenv(name)) return v;
     return fallback;
-}
-
-// Extracts a top-level JSON value as a raw token, tolerating both quoted and
-// unquoted forms — unlike json_field() (string-only), this also reads numbers
-// and booleans, so {"http":8081} and {"force":true} parse, not just the quoted
-// variants. Returns "" if absent.
-std::string json_token(const std::string& body, const std::string& key) {
-    const std::string q = "\"" + key + "\"";
-    auto pos = body.find(q);
-    if (pos == std::string::npos) return {};
-    pos = body.find(':', pos + q.size());
-    if (pos == std::string::npos) return {};
-    ++pos;
-    while (pos < body.size() && std::isspace(static_cast<unsigned char>(body[pos]))) ++pos;
-    size_t end = pos;
-    while (end < body.size() && body[end] != ',' && body[end] != '}') ++end;
-    std::string v = body.substr(pos, end - pos);
-    while (!v.empty() && std::isspace(static_cast<unsigned char>(v.back()))) v.pop_back();
-    if (v.size() >= 2 && v.front() == '"' && v.back() == '"') v = v.substr(1, v.size() - 2);
-    return v;
 }
 
 } // namespace
@@ -117,8 +104,15 @@ int main()
 
         // Public API — no authentication required.
         engine.add_api(http::verb::get, "/api/public", [](const RequestContext&) {
-            return json(http::status::ok,
-                R"({"message":"This is public data. No authentication required."})");
+            return json(http::status::ok, glz::write_json(
+                glz::obj{"message", "This is public data. No authentication required."}).value_or(std::string{}));
+        });
+
+        // Public: which reverse proxy is in front. Lets the static frontend label
+        // itself (e.g. "lighttpd + Beast PoC") without needing to log in — unlike
+        // the Admin-only /api/admin/server/status. Returns {"server":"nginx"|"lighttpd"}.
+        engine.add_api(http::verb::get, "/api/server", [server](const RequestContext&) {
+            return json(http::status::ok, glz::write_json(glz::obj{"server", server}).value_or(std::string{}));
         });
 
         // Public: which reverse proxy is in front. Lets the static frontend label
@@ -133,9 +127,8 @@ int main()
         // is handed to the handler via ctx.user.
         engine.add_api(http::verb::get, "/api/private", [](const RequestContext& ctx) {
             const UserInfo& u = *ctx.user;   // guaranteed present by the min_role below
-            return json(http::status::ok,
-                R"({"message":"private data","user":")" + u.username +
-                R"(","role":")" + std::string(role_name(u.role)) + R"("})");
+            return json(http::status::ok, glz::write_json(glz::obj{"message", "private data",
+                "user", u.username, "role", role_name(u.role)}).value_or(std::string{}));
         }, Role::Admin);
 
         // ── Role-tiered test endpoints ────────────────────────────────────────
@@ -152,10 +145,9 @@ int main()
         auto tiered = [](const char* level) {
             return [level](const RequestContext& ctx) {
                 const UserInfo& u = *ctx.user;   // present: these routes require a role
-                return json(http::status::ok,
-                    std::string(R"({"message":")") + level + R"( access granted","required":")"
-                    + level + R"(","user":")" + u.username
-                    + R"(","role":")" + role_name(u.role) + R"("})");
+                const std::string message = std::string(level) + " access granted";
+                return json(http::status::ok, glz::write_json(glz::obj{"message", message,
+                    "required", level, "user", u.username, "role", role_name(u.role)}).value_or(std::string{}));
             };
         };
         engine.add_api(http::verb::get, "/api/viewer", tiered("viewer"), Role::Viewer);
@@ -181,9 +173,11 @@ int main()
         // The reverse proxy is this API's only ingress, so an unguarded stop would
         // lock the caller out (no way to reach /on again). Require explicit confirm.
         engine.add_api(http::verb::post, "/api/admin/server/off", [s](const RequestContext& ctx) {
-            if (json_token(ctx.request.body(), "force") != "true")
-                return json(http::status::conflict,
-                    R"({"error":"stopping the web server makes this API unreachable since it is the only ingress; resend with force=true to confirm, or use reset"})");
+            ForceReq req{};
+            if (glz::read<glz::opts{.error_on_unknown_keys = false}>(req, ctx.request.body())
+                    || req.force != true)
+                return json(http::status::conflict, glz::write_json(glz::obj{"error",
+                    "stopping the web server makes this API unreachable since it is the only ingress; resend with force=true to confirm, or use reset"}).value_or(std::string{}));
             return server_result(s->off(), *s);
         }, Role::Admin);
 
@@ -193,26 +187,24 @@ int main()
 
         engine.add_api(http::verb::post, "/api/admin/server/port",
                        [s, port_min, port_max](const RequestContext& ctx) {
-            std::string http_s = json_token(ctx.request.body(), "http");
-            int p = 0;
-            try { p = std::stoi(http_s); }
-            catch (...) {
-                return json(http::status::bad_request,
-                            R"J({"error":"required: http (an integer port number)"})J");
-            }
+            PortReq req{};
+            if (glz::read<glz::opts{.error_on_unknown_keys = false}>(req, ctx.request.body())
+                    || !req.http)
+                return json(http::status::bad_request, glz::write_json(
+                    glz::obj{"error", "required: http (an integer port number)"}).value_or(std::string{}));
+            const int p = *req.http;
             if (p < port_min || p > port_max)
-                return json(http::status::bad_request,
-                    std::string(R"({"error":"http port must be in the routable range )")
-                    + std::to_string(port_min) + "-" + std::to_string(port_max) + R"("})");
+                return json(http::status::bad_request, glz::write_json(glz::obj{"error",
+                    "http port must be in the routable range "
+                    + std::to_string(port_min) + "-" + std::to_string(port_max)}).value_or(std::string{}));
             return server_result(s->set_listen_port(static_cast<std::uint16_t>(p)), *s);
         }, Role::Admin);
 
         engine.add_api(http::verb::get, "/api/admin/server/status", [s, server](const RequestContext&) {
-            return json(http::status::ok,
-                std::string(R"({"server":")") + server
-                + R"(","running":)" + (s->is_running() ? "true" : "false")
-                + R"(,"http_port":)"  + std::to_string(s->http_port())
-                + R"(,"https_port":)" + std::to_string(s->https_port()) + "}");
+            return json(http::status::ok, glz::write_json(glz::obj{"server", server,
+                "running", s->is_running(),
+                "http_port", s->http_port(),
+                "https_port", s->https_port()}).value_or(std::string{}));
         }, Role::Admin);
 
         // 4. Graceful shutdown on SIGINT/SIGTERM, the async-signal-safe way

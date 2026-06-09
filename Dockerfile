@@ -1,9 +1,16 @@
 # ── Stage 1: build the C++ backend ───────────────────────────────────────────
-FROM debian:bookworm-slim AS builder
+# Built on the official GCC 13 image rather than debian:bookworm-slim because the
+# JSON layer (glaze, pulled in via CMake FetchContent below) needs a C++23 compiler
+# and supports GCC 13+, while bookworm only ships GCC 12. This image is itself
+# Debian bookworm based, so the backend's dynamically-linked glibc matches the
+# bookworm runtime stage (a newer-glibc builder would fail at runtime). git is
+# required because FetchContent clones glaze at configure time.
+FROM gcc:13-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
+        git \
         libboost-dev \
         libboost-system-dev \
         libssl-dev \
