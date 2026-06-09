@@ -10,6 +10,20 @@ void Router::add_route(http::verb method, std::string path, Handler handler,
     routes_[Key{method, std::move(path)}] = Route{std::move(handler), min_role};
 }
 
+void Router::add_prefix_route(http::verb method, std::string prefix, Handler handler,
+                              std::optional<Role> min_role)
+{
+    std::unique_lock lock(mutex_);
+    for (auto& pr : prefix_routes_) {       // replace an existing (method, prefix)
+        if (pr.method == method && pr.prefix == prefix) {
+            pr.handler  = std::move(handler);
+            pr.min_role = min_role;
+            return;
+        }
+    }
+    prefix_routes_.push_back({method, std::move(prefix), std::move(handler), min_role});
+}
+
 bool Router::set_route_role(const std::string& path, std::optional<Role> min_role)
 {
     std::unique_lock lock(mutex_);
@@ -38,10 +52,22 @@ Response Router::dispatch(const Request& req) const
     {
         std::shared_lock lock(mutex_);
         auto it = routes_.find(Key{req.method(), path});
-        if (it == routes_.end())
-            return text(http::status::not_found, "Not Found");
-        handler  = it->second.handler;
-        min_role = it->second.min_role;
+        if (it != routes_.end()) {
+            handler  = it->second.handler;
+            min_role = it->second.min_role;
+        } else {
+            // No exact route — fall back to the longest matching prefix route.
+            const PrefixRoute* best = nullptr;
+            for (const auto& pr : prefix_routes_) {
+                if (pr.method == req.method() && path.rfind(pr.prefix, 0) == 0)
+                    if (!best || pr.prefix.size() > best->prefix.size())
+                        best = &pr;
+            }
+            if (!best)
+                return text(http::status::not_found, "Not Found");
+            handler  = best->handler;
+            min_role = best->min_role;
+        }
     }
 
     RequestContext ctx{req, std::nullopt};

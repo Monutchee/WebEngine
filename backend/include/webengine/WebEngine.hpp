@@ -67,6 +67,23 @@ public:
     // Remove a previously protected prefix.
     WebEngine& unprotect_path(const std::string& prefix);
 
+    // ── Gated static files (for reverse proxies without auth_request) ──────────
+
+    // Serve static files under `url_prefix` from the filesystem directory
+    // `fs_root`, gated by the SAME session token + protected-path ACL that
+    // /auth-check enforces (so protect_path() and /api/admin/acl apply identically).
+    // The served file is `fs_root` joined with the request path minus `url_prefix`.
+    //
+    // This exists for reverse proxies that lack nginx's auth_request — notably
+    // lighttpd, which proxies /protected/ here so the backend gates AND serves
+    // those files. With nginx (which gates /protected/ itself and serves it
+    // directly) this stays dormant: nginx never proxies the subtree here. Serve
+    // PUBLIC static files from the reverse proxy directly — use this only for
+    // gated subtrees. Behaviour matches the nginx /protected/ flow: unauthenticated
+    // → 302 to "/?reason=unauthenticated", under-privileged → 403, otherwise the
+    // file (or 404). Registers a GET prefix route; ".." traversal is rejected.
+    WebEngine& serve_protected_files(std::string url_prefix, std::string fs_root);
+
     // ── Built-in endpoints ─────────────────────────────────────────────────────
 
     // Registers POST /api/login, POST /api/logout and GET /auth-check, wired to

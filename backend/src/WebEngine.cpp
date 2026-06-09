@@ -107,6 +107,20 @@ WebEngine& WebEngine::unprotect_path(const std::string& prefix)
     return *this;
 }
 
+WebEngine& WebEngine::serve_protected_files(std::string url_prefix, std::string fs_root)
+{
+    AuthHandler*      h      = &impl_->auth_handler;
+    const std::string prefix = url_prefix;   // copied into the handler + used as the route key
+    // Registered as a public prefix route — the handler itself applies the
+    // token + ACL gate (so it can mirror nginx's 302/403 behaviour, not the
+    // router's generic 401/403 JSON).
+    impl_->router.add_prefix_route(http::verb::get, prefix,
+        [h, prefix, root = std::move(fs_root)](const RequestContext& ctx) {
+            return h->handle_protected_file(ctx.request, root, prefix);
+        }, std::nullopt);
+    return *this;
+}
+
 // ── Built-in endpoints ────────────────────────────────────────────────────────
 
 WebEngine& WebEngine::enable_auth_endpoints()

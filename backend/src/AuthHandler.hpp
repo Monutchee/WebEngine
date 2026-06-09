@@ -25,6 +25,19 @@ public:
     // success echoes the user/role back in X-User / X-Role headers.
     Response handle_check(const Request& req);
 
+    // GET <gated subtree> — serve a static file with the SAME session-token + ACL
+    // gate that handle_check applies, for a reverse proxy that lacks auth_request
+    // (lighttpd). The file is read from `fs_root` joined with the request path
+    // minus `url_prefix`. Behaviour mirrors the nginx /protected/ flow:
+    //   no/invalid token   -> 302 redirect to "/?reason=unauthenticated"
+    //   ACL denies the role-> 403 "Access denied"
+    //   authorized + found -> 200 with the file body and a content-type by extension
+    //   authorized, missing-> 404
+    // Path traversal ("..") is rejected.
+    Response handle_protected_file(const Request& req,
+                                   const std::string& fs_root,
+                                   const std::string& url_prefix);
+
 private:
     AuthProvider& auth_;
     TokenStore&   tokens_;

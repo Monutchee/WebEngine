@@ -21,7 +21,10 @@ add_library(webengine STATIC
     src/AuthHandler.cpp
     src/Session.cpp
     src/Listener.cpp
+    src/ProcessUtil.cpp
     src/NginxController.cpp
+    src/LighttpdController.cpp
+    src/WebServerFactory.cpp
 )
 
 # Public headers (include/webengine/*) are visible to consumers; src/ is private.

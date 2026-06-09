@@ -1,7 +1,31 @@
 #include "AuthHandler.hpp"
 #include "util.hpp"
 
+#include <fstream>
+#include <sstream>
+
 namespace webengine {
+
+namespace {
+
+// Minimal extension → MIME map for the static files this PoC serves. Unknown
+// extensions fall back to a safe binary default.
+std::string content_type_for(const std::string& path) {
+    auto dot = path.rfind('.');
+    std::string ext = (dot == std::string::npos) ? "" : path.substr(dot + 1);
+    if (ext == "html" || ext == "htm") return "text/html";
+    if (ext == "txt")                  return "text/plain";
+    if (ext == "css")                  return "text/css";
+    if (ext == "js")                   return "application/javascript";
+    if (ext == "json")                 return "application/json";
+    if (ext == "svg")                  return "image/svg+xml";
+    if (ext == "png")                  return "image/png";
+    if (ext == "jpg" || ext == "jpeg") return "image/jpeg";
+    if (ext == "ico")                  return "image/x-icon";
+    return "application/octet-stream";
+}
+
+} // namespace
 
 Response AuthHandler::handle_login(const Request& req)
 {
@@ -53,6 +77,51 @@ Response AuthHandler::handle_check(const Request& req)
     res.set("X-User", entry->username);
     res.set("X-Role", role_name(entry->role));
     return res;
+}
+
+Response AuthHandler::handle_protected_file(const Request& req,
+                                            const std::string& fs_root,
+                                            const std::string& url_prefix)
+{
+    // Path only; drop any query string.
+    auto target = req.target();
+    std::string path(target.data(), target.size());
+    if (auto q = path.find('?'); q != std::string::npos)
+        path.resize(q);
+
+    // Authn: no/invalid token → redirect to the login page (matches nginx's
+    // `error_page 401 = @login_redirect` for /protected/).
+    auto entry = validated_token(req, tokens_);
+    if (!entry) {
+        Response res{http::status::found, req.version()};
+        res.set(http::field::location, "/?reason=unauthenticated");
+        res.prepare_payload();
+        return res;
+    }
+
+    // Authz: the same longest-prefix ACL /auth-check consults.
+    if (!acl_.authorize(entry->role, path))
+        return text(http::status::forbidden, "Access denied");
+
+    // Map URL → filesystem path. Reject any parent-dir escape before touching disk.
+    std::string rel = path.size() > url_prefix.size() ? path.substr(url_prefix.size())
+                                                      : std::string();
+    if (rel.empty() || rel.back() == '/') rel += "index.html";
+    if (rel.find("..") != std::string::npos)
+        return text(http::status::forbidden, "Access denied");
+    while (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+
+    std::string file = fs_root;
+    if (!file.empty() && file.back() == '/') file.pop_back();
+    file += "/" + rel;
+
+    std::ifstream in(file, std::ios::binary);
+    if (!in)
+        return text(http::status::not_found, "Not Found");
+    std::ostringstream ss;
+    ss << in.rdbuf();
+
+    return make_response(http::status::ok, ss.str(), content_type_for(rel));
 }
 
 } // namespace webengine

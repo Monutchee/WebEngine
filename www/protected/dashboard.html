@@ -19,22 +19,46 @@
 </head>
 <body>
   <h1>Dashboard <span class="badge">Protected</span></h1>
-  <p>You have accessed a protected resource gated by nginx <code>auth_request</code>.</p>
+  <p id="gating">You have accessed a protected resource.</p>
 
   <!-- ── Public API ── -->
   <h2>Public API <small style="color:#888">(no auth needed)</small></h2>
   <button id="btn-public">GET /api/public</button>
   <pre id="out-public">—</pre>
 
-  <!-- ── Private API ── -->
-  <h2>Private API <small style="color:#888">(auth enforced by backend)</small></h2>
-  <button id="btn-private">GET /api/private</button>
-  <pre id="out-private">—</pre>
+  <!-- ── Role-tiered APIs ── -->
+  <h2>Role-tiered APIs <small style="color:#888">(min role enforced by the backend)</small></h2>
+  <p style="font-size:.85rem;color:#666;margin:.2rem 0 .7rem">
+    Your role decides which succeed (<strong>200</strong>) vs. are denied (<strong>403</strong>).
+    Ordering: <code>viewer &lt; user &lt; admin</code>. Logged in as
+    <strong id="whoami">…</strong>.
+  </p>
+  <button id="btn-viewer">GET /api/viewer</button>
+  <button id="btn-user">GET /api/user</button>
+  <button id="btn-admin">GET /api/admin</button>
+  <pre id="out-tier">—</pre>
 
   <h2></h2>
   <button class="danger" id="btn-logout">Logout</button>
 
   <script>
+    // Describe how THIS request was gated, based on the reverse proxy in front:
+    //   nginx    — gated by nginx's auth_request sub-request to /auth-check
+    //   lighttpd — gated by the backend itself (lighttpd has no auth_request, so it
+    //              proxies /protected/ to the backend, which gates AND serves it)
+    fetch('/api/server')
+      .then(r => r.json())
+      .then(d => {
+        const p = document.getElementById('gating');
+        if (d.server === 'lighttpd')
+          p.innerHTML = 'You have accessed a protected resource gated by the <strong>backend</strong> '
+                      + '(lighttpd proxies <code>/protected/</code> to it — lighttpd has no <code>auth_request</code>).';
+        else
+          p.innerHTML = 'You have accessed a protected resource gated by <strong>nginx</strong> <code>auth_request</code>.';
+        document.title = (d.server === 'lighttpd' ? 'lighttpd' : 'Nginx') + ' — Dashboard (Protected)';
+      })
+      .catch(() => {});
+
     async function call(url, outId) {
       const out = document.getElementById(outId);
       try {
@@ -43,8 +67,16 @@
       } catch (e) { out.textContent = 'Error: ' + e.message; }
     }
 
-    document.getElementById('btn-public') .addEventListener('click', () => call('/api/public',  'out-public'));
-    document.getElementById('btn-private').addEventListener('click', () => call('/api/private', 'out-private'));
+    document.getElementById('btn-public').addEventListener('click', () => call('/api/public', 'out-public'));
+    document.getElementById('btn-viewer').addEventListener('click', () => call('/api/viewer', 'out-tier'));
+    document.getElementById('btn-user')  .addEventListener('click', () => call('/api/user',   'out-tier'));
+    document.getElementById('btn-admin') .addEventListener('click', () => call('/api/admin',  'out-tier'));
+
+    // Show which account we're logged in as (any authenticated user may call /api/viewer).
+    fetch('/api/viewer', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) document.getElementById('whoami').textContent = d.user + ' (' + d.role + ')'; })
+      .catch(() => {});
 
     document.getElementById('btn-logout').addEventListener('click', async () => {
       await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });

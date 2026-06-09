@@ -1,20 +1,23 @@
 [Unit]
-Description=Boost.Beast API backend (owns and supervises nginx)
+Description=Boost.Beast API backend (owns and supervises its reverse proxy)
 After=network.target
-# The backend starts/stops/reloads nginx itself via webengine::NginxController.
-# The distro nginx.service must NOT also manage nginx, or you get a double-start
-# (and as root, breaking the same-user control model). Mask it — see README.md.
-# Conflicts ensures the two never run at once if nginx.service is still present.
+# The backend starts/stops/reloads its reverse proxy itself via
+# webengine::WebServerController. The distro nginx/lighttpd service must NOT also
+# manage that server, or you get a double-start (and as root, breaking the
+# same-user control model). Mask it — see README.md. Conflicts ensures the two
+# never run at once. When driving lighttpd, also add: Conflicts=lighttpd.service
 Conflicts=nginx.service
 
 [Service]
 Type=simple
 User=www-data
 Group=www-data
+# Which reverse proxy the backend drives: "nginx" (default) or "lighttpd".
+# Environment=WEBENGINE_WEBSERVER=lighttpd
 # Clean stale runtime state so bind()/pidfile checks start fresh (mirrors
-# entrypoint.sh): the socket, the nginx pidfile, and the nginx temp dir.
-ExecStartPre=/bin/rm -f /tmp/backend.sock /tmp/nginx.pid
-ExecStartPre=/bin/mkdir -p /tmp/nginx
+# entrypoint.sh): the socket plus both servers' pidfiles and temp dirs.
+ExecStartPre=/bin/rm -f /tmp/backend.sock /tmp/nginx.pid /tmp/lighttpd.pid
+ExecStartPre=/bin/mkdir -p /tmp/nginx /tmp/lighttpd
 ExecStart=/usr/local/bin/backend
 Restart=on-failure
 RestartSec=1s
