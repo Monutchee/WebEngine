@@ -10,8 +10,11 @@ namespace webengine {
 
 int NginxController::run(const std::vector<std::string>& args, bool capture) const
 {
-    // argv = nginx -c <config> <args...>
-    std::vector<std::string> argv{opts_.nginx_bin, "-c", opts_.config};
+    // Route even pre-configuration diagnostics to the inherited stderr. This
+    // avoids nginx trying its compiled-in /var/log/nginx/error.log path first.
+    std::vector<std::string> argv{
+        opts_.nginx_bin, "-e", "stderr", "-c", opts_.config
+    };
     argv.insert(argv.end(), args.begin(), args.end());
 
     std::string output, err;

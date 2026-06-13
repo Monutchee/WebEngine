@@ -80,9 +80,26 @@ const char* to_string(WebServer kind);
 std::optional<WebServer> web_server_from_string(const std::string& name);
 
 // Construct a controller for `kind`, configured with that server's defaults
-// (binary path, config path, pidfile, listen snippet, ports). Tweak the result
-// afterwards through its concrete Options if you need non-default paths. Never
-// returns nullptr for a valid enum value.
+// (binary path, config path, pidfile, listen snippet, ports). Never returns
+// nullptr for a valid enum value.
 std::unique_ptr<WebServerController> make_web_server_controller(WebServer kind);
+
+// Optional filesystem path overrides for non-default deployments — e.g. the
+// embedded target, where config/state live under /opt/monutchee/msys instead of
+// /etc. An empty field keeps that server's built-in default. The same struct maps
+// onto whichever server make_web_server_controller() builds (both NginxController
+// and LighttpdController share these four fields).
+struct WebServerPaths {
+    std::string config;       // main config file (nginx -c / lighttpd -f)
+    std::string listen_file;  // generated listen snippet (must match the config's `include`)
+    std::string pidfile;      // must match the pid directive in the config
+    std::string temp_root;    // parent of the server's temp dirs
+};
+
+// As make_web_server_controller(kind), but applies `paths` over the server's
+// defaults (non-empty fields win). Lets the deployment relocate config/state
+// without the caller knowing which concrete server it drives.
+std::unique_ptr<WebServerController>
+make_web_server_controller(WebServer kind, const WebServerPaths& paths);
 
 } // namespace webengine

@@ -78,8 +78,8 @@ public:
 private:
     bool ensure_dirs();
     bool write_listen_snippet();
-    // Runs `nginx -c <config> <args...>` via proc::spawn. When capture is true the
-    // child's output is collected (used for short-lived commands like -t / -s);
+    // Runs `nginx -e stderr -c <config> <args...>` via proc::spawn. When capture
+    // is true the child's output is collected (used for short-lived commands like -t / -s);
     // when false the child inherits stderr (the daemonizing start). Returns the
     // exit code, or -1; sets last_error_ on failure.
     int  run(const std::vector<std::string>& args, bool capture) const;

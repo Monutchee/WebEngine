@@ -66,7 +66,17 @@ int main()
         //    defaults to this repo's container layout for its server.
         const std::string srv_name = env_str("WEBENGINE_WEBSERVER", "nginx");
         const WebServer kind = web_server_from_string(srv_name).value_or(WebServer::Nginx);
-        std::unique_ptr<WebServerController> srv = make_web_server_controller(kind);
+
+        // Filesystem paths default to this repo's container layout (/etc/nginx,
+        // /tmp). The embedded target overrides them via WEBENGINE_* in its systemd
+        // unit to point config/state at /opt/monutchee/msys; an unset/empty value
+        // keeps the default, so Docker is unaffected.
+        WebServerPaths paths;
+        paths.config      = env_str("WEBENGINE_CONFIG",      "");
+        paths.listen_file = env_str("WEBENGINE_LISTEN_FILE", "");
+        paths.pidfile     = env_str("WEBENGINE_PIDFILE",     "");
+        paths.temp_root   = env_str("WEBENGINE_TEMP_ROOT",   "");
+        std::unique_ptr<WebServerController> srv = make_web_server_controller(kind, paths);
         const char* server = to_string(kind);
 
         // Initial listen ports (default 8080/8443). The deployment overrides these
