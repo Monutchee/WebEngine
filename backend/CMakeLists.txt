@@ -14,16 +14,21 @@ find_package(Boost 1.74 REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
-# glaze — header-only JSON (de)serialisation. Fetched at configure time; needs
-# network access on the first configure (then cached under the build tree).
-include(FetchContent)
-FetchContent_Declare(
-    glaze
-    GIT_REPOSITORY https://github.com/stephenberry/glaze.git
-    GIT_TAG        v7.7.1
-    GIT_SHALLOW    TRUE
-)
-FetchContent_MakeAvailable(glaze)
+# Prefer a package supplied by the build environment (for example Docker or
+# Yocto). For ordinary local builds, keep Glaze entirely inside build/_deps.
+find_package(glaze 7.7.1 CONFIG QUIET)
+if(NOT glaze_FOUND)
+    include(FetchContent)
+    message(STATUS "Glaze 7.7.1 was not found; fetching it into the build directory")
+    set(glaze_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(glaze_DEVELOPER_MODE OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(glaze
+        GIT_REPOSITORY https://github.com/stephenberry/glaze.git
+        GIT_TAG v7.7.1
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(glaze)
+endif()
 
 # ── The reusable web-engine library ───────────────────────────────────────────
 add_library(webengine STATIC

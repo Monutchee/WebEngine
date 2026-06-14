@@ -1,11 +1,12 @@
 # ── Stage 1: build the C++ backend ───────────────────────────────────────────
 # Built on the official GCC 13 image rather than debian:bookworm-slim because the
-# JSON layer (glaze, pulled in via CMake FetchContent below) needs a C++23 compiler
+# JSON layer (Glaze) needs a C++23 compiler
 # and supports GCC 13+, while bookworm only ships GCC 12. This image is itself
 # Debian bookworm based, so the backend's dynamically-linked glibc matches the
-# bookworm runtime stage (a newer-glibc builder would fail at runtime). git is
-# required because FetchContent clones glaze at configure time.
+# bookworm runtime stage (a newer-glibc builder would fail at runtime).
 FROM gcc:13-bookworm AS builder
+
+ARG GLAZE_VERSION=7.7.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
@@ -16,6 +17,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libssl-dev \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Glaze's headers and CMake package so the backend can use find_package().
+RUN git clone --depth 1 --branch "v${GLAZE_VERSION}" \
+        https://github.com/stephenberry/glaze.git /tmp/glaze \
+    && cmake -S /tmp/glaze -B /tmp/glaze-build \
+        -Dglaze_BUILD_EXAMPLES=OFF \
+        -Dglaze_DEVELOPER_MODE=OFF \
+    && cmake --install /tmp/glaze-build --prefix /usr/local \
+    && rm -rf /tmp/glaze /tmp/glaze-build
 
 WORKDIR /src
 COPY backend/ .
