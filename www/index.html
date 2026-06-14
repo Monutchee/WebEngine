@@ -23,7 +23,7 @@
   </style>
 </head>
 <body>
-  <h1>Nginx + Beast PoC</h1>
+  <h1 id="title">Beast PoC</h1>
 
   <!-- ── Login ── -->
   <form id="login-form">
@@ -39,6 +39,19 @@
   <pre id="out-public">—</pre>
 
   <script>
+    // Label the page with the reverse proxy actually serving it (nginx / lighttpd),
+    // fetched from the public /api/server endpoint. The same index.html is served
+    // by both, so the title is set at runtime rather than hard-coded.
+    const SERVER_NAMES = { nginx: 'Nginx', lighttpd: 'lighttpd' };
+    fetch('/api/server')
+      .then(r => r.json())
+      .then(d => {
+        const name = (SERVER_NAMES[d.server] || d.server || '') + ' + Beast PoC';
+        document.getElementById('title').textContent = name;
+        document.title = name;
+      })
+      .catch(() => {});
+
     if (new URLSearchParams(location.search).get('reason') === 'unauthenticated') {
       const e = document.getElementById('login-err');
       e.textContent = 'Session expired or not logged in.';

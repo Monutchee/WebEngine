@@ -1,13 +1,41 @@
 [Unit]
-Description=Boost.Beast API backend
+Description=Boost.Beast API backend (owns and supervises its reverse proxy)
 After=network.target
+# The backend starts/stops/reloads its reverse proxy itself via
+# webengine::WebServerController (Option A — see README.md). The distro
+# nginx.service must therefore stay DISABLED (meta-mncos does this), or nginx
+# would start twice. Conflicts= is belt-and-suspenders so the two can never run
+# at once. (When driving lighttpd, also add Conflicts=lighttpd.service.)
+Conflicts=nginx.service
 
 [Service]
 Type=simple
-User=www-data
-Group=www-data
-# Remove stale socket on every start so bind() never sees EADDRINUSE.
-ExecStartPre=/bin/rm -f /tmp/backend.sock
+User=worker
+Group=worker
+
+# nginx binds 80/443 but the backend is not root, so grant just the bind-low-
+# ports capability. Ambient caps survive exec into the (non-setuid, no-file-cap)
+# nginx the backend spawns, so nginx inherits it and binds 80/443 with no root
+# and no setcap on the nginx binary. Do NOT setcap nginx — a binary carrying its
+# own file caps would clear the inherited ambient set.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Which reverse proxy the backend drives: "nginx" (default) or "lighttpd".
+# Environment=WEBENGINE_WEBSERVER=lighttpd
+
+# Point the controller at the on-target nginx layout under /opt/monutchee/msys
+# and at ports 80/443. (The binary's built-in defaults target Docker: /etc/nginx,
+# ports 8080/8443; pidfile/temp default to /tmp and need no override here.)
+Environment=WEBENGINE_CONFIG=/opt/monutchee/msys/conf/webserver/nginx.conf
+Environment=WEBENGINE_LISTEN_FILE=/opt/monutchee/msys/conf/webserver/listen.conf
+Environment=WEBENGINE_HTTP_PORT=80
+Environment=WEBENGINE_HTTPS_PORT=443
+
+# Clean stale runtime state so bind()/pidfile checks start fresh: the socket plus
+# the nginx pidfile and temp dir (all on tmpfs).
+ExecStartPre=/bin/rm -f /tmp/backend.sock /tmp/nginx.pid
+ExecStartPre=/bin/mkdir -p /tmp/nginx
 ExecStart=/usr/local/bin/backend
 Restart=on-failure
 RestartSec=1s

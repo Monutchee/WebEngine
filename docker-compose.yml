@@ -1,11 +1,54 @@
+# One image (built once) drives two services — one per reverse proxy. The backend
+# "owns" exactly ONE server per container, chosen by WEBENGINE_WEBSERVER, so the
+# two run as separate containers on non-overlapping port ranges. Run either alone
+# or both side-by-side:
+#   docker compose up --build              # both
+#   docker compose up --build poc          # nginx only   (host :8080-8085, :8443)
+#   docker compose up --build poc-lighttpd # lighttpd only (host :9080-9085, :9443)
 services:
+  # ── nginx (default) ─────────────────────────────────────────────────────────
   poc:
-    build:
+    build: &build
       context: .
       dockerfile: Dockerfile
     image: nginx-beast-poc:latest
     container_name: nginx-beast-poc
+    # Run as the unprivileged service user so the C++ backend and the web server
+    # share a uid (lets the backend signal/reload it without root or capabilities).
+    user: "www-data"
+    # tini as PID 1 reaps the web-server daemon the backend spawns.
+    init: true
+    environment:
+      WEBENGINE_WEBSERVER: "nginx"
+      WEBENGINE_HTTP_PORT:  "8080"
+      WEBENGINE_HTTPS_PORT: "8443"
+      # The /api/admin/server/port endpoint only accepts ports the host can
+      # actually reach — i.e. the published range below.
+      WEBENGINE_HTTP_PORT_MIN: "8080"
+      WEBENGINE_HTTP_PORT_MAX: "8085"
+    # 1:1 port mapping over a small range: when the controller changes the listen
+    # port at runtime (e.g. to 8082), the same host port reaches it. HTTPS at 8443.
     ports:
-      - "0.0.0.0:8080:80"    # HTTP
-      - "0.0.0.0:8443:443"   # HTTPS (self-signed cert — browser will warn)
+      - "0.0.0.0:8080-8085:8080-8085"   # HTTP  (default 8080, runtime-changeable)
+      - "0.0.0.0:8443:8443"             # HTTPS (self-signed cert — browser will warn)
+    restart: unless-stopped
+
+  # ── lighttpd (for older/embedded platforms) ──────────────────────────────────
+  # Same image; selected via WEBENGINE_WEBSERVER. Different port range (9080-9085 /
+  # 9443) so it can run at the same time as the nginx service without colliding.
+  poc-lighttpd:
+    build: *build
+    image: nginx-beast-poc:latest
+    container_name: lighttpd-beast-poc
+    user: "www-data"
+    init: true
+    environment:
+      WEBENGINE_WEBSERVER: "lighttpd"
+      WEBENGINE_HTTP_PORT:  "9080"
+      WEBENGINE_HTTPS_PORT: "9443"
+      WEBENGINE_HTTP_PORT_MIN: "9080"
+      WEBENGINE_HTTP_PORT_MAX: "9085"
+    ports:
+      - "0.0.0.0:9080-9085:9080-9085"   # HTTP  (default 9080, runtime-changeable)
+      - "0.0.0.0:9443:9443"             # HTTPS (self-signed cert — browser will warn)
     restart: unless-stopped

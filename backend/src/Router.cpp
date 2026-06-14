@@ -1,150 +1,100 @@
 #include "Router.hpp"
+#include "util.hpp"
 
-static std::string acl_entries_json(const std::vector<AclEntry>& entries) {
-    std::string out = R"({"entries":[)";
-    for (size_t i = 0; i < entries.size(); ++i) {
-        if (i) out += ',';
-        out += R"({"prefix":")" + entries[i].path_prefix
-             + R"(","min_role":")" + role_name(entries[i].min_role) + R"("})";
-    }
-    return out + "]}";
-}
+#include <glaze/glaze.hpp>
 
-static std::string users_json(const std::unordered_map<std::string, Role>& users) {
-    std::string out = R"({"users":[)";
-    bool first = true;
-    for (const auto& [name, role] : users) {
-        if (!first) out += ',';
-        first = false;
-        out += R"({"username":")" + name
-             + R"(","role":")" + role_name(role) + R"("})";
-    }
-    return out + "]}";
-}
+namespace webengine {
 
-http::response<http::string_body>
-Router::dispatch(const http::request<http::string_body>& req)
+void Router::add_route(http::verb method, std::string path, Handler handler,
+                       std::optional<Role> min_role)
 {
-    auto target = req.target();
-    auto method = req.method();
-
-    // ── Auth endpoints ────────────────────────────────────────────────────────
-    if (target == "/api/login" && method == http::verb::post)
-        return auth_.handle_login(req);
-
-    if (target == "/api/logout" && method == http::verb::post)
-        return auth_.handle_logout(req);
-
-    // Called internally by nginx auth_request for /protected/* access.
-    if (target == "/auth-check" && method == http::verb::get)
-        return auth_.handle_check(req);
-
-    // ── Public API — no authentication required ───────────────────────────────
-    if (target == "/api/public" && method == http::verb::get)
-        return make_json_response(http::status::ok,
-            R"({"message":"This is public data. No authentication required."})");
-
-    // ── Private API — role enforced via ACL ───────────────────────────────────
-    if (target == "/api/private" && method == http::verb::get) {
-        auto entry = auth_.get_token_entry(req);
-        if (!entry)
-            return make_json_response(http::status::unauthorized,
-                R"({"error":"authentication required"})");
-        std::string path(target.data(), target.size());
-        if (!acl_.authorize(entry->role, path))
-            return make_json_response(http::status::forbidden,
-                R"({"error":"insufficient permissions"})");
-        return make_json_response(http::status::ok,
-            R"({"message":"private data","user":")" + entry->username
-            + R"(","role":")" + role_name(entry->role) + R"("})");
-    }
-
-    // ── Admin API — require Admin role ────────────────────────────────────────
-    // Shared guard: returns an error response if the request is not from an Admin.
-    auto require_admin = [&]() -> std::optional<http::response<http::string_body>> {
-        auto e = auth_.get_token_entry(req);
-        if (!e)
-            return make_json_response(http::status::unauthorized,
-                R"({"error":"authentication required"})");
-        if (e->role != Role::Admin)
-            return make_json_response(http::status::forbidden,
-                R"({"error":"admin role required"})");
-        return std::nullopt;
-    };
-
-    // ACL management: GET/POST/DELETE /api/admin/acl
-    if (target == "/api/admin/acl") {
-        if (auto err = require_admin()) return *err;
-
-        if (method == http::verb::get)
-            return make_json_response(http::status::ok,
-                acl_entries_json(acl_.list_acl_entries()));
-
-        if (method == http::verb::post) {
-            std::string prefix   = extract_json_field(req.body(), "prefix");
-            std::string role_str = extract_json_field(req.body(), "role");
-            Role min_role;
-            if (prefix.empty() || !role_from_string(role_str, min_role))
-                return make_json_response(http::status::bad_request,
-                    "{\"error\":\"required: prefix (string), role (admin|user|viewer|guest)\"}");
-            acl_.set_acl_entry(prefix, min_role);
-            return make_json_response(http::status::ok, R"({"status":"ok"})");
-        }
-
-        if (method == http::verb::delete_) {
-            std::string prefix = extract_json_field(req.body(), "prefix");
-            if (prefix.empty())
-                return make_json_response(http::status::bad_request,
-                    "{\"error\":\"required: prefix (string)\"}");
-            acl_.remove_acl_entry(prefix);
-            return make_json_response(http::status::ok, R"({"status":"ok"})");
-        }
-    }
-
-    // User management: GET/POST/DELETE/PATCH /api/admin/users
-    if (target == "/api/admin/users") {
-        if (auto err = require_admin()) return *err;
-
-        if (method == http::verb::get)
-            return make_json_response(http::status::ok,
-                users_json(acl_.list_users()));
-
-        if (method == http::verb::post) {
-            std::string username = extract_json_field(req.body(), "username");
-            std::string password = extract_json_field(req.body(), "password");
-            std::string role_str = extract_json_field(req.body(), "role");
-            Role role;
-            if (username.empty() || password.empty() || !role_from_string(role_str, role))
-                return make_json_response(http::status::bad_request,
-                    "{\"error\":\"required: username, password, role (admin|user|viewer|guest)\"}");
-            acl_.add_user(username, password, role);
-            return make_json_response(http::status::ok, R"({"status":"ok"})");
-        }
-
-        if (method == http::verb::delete_) {
-            std::string username = extract_json_field(req.body(), "username");
-            if (username.empty())
-                return make_json_response(http::status::bad_request,
-                    "{\"error\":\"required: username (string)\"}");
-            if (!acl_.remove_user(username))
-                return make_json_response(http::status::not_found,
-                    R"({"error":"user not found"})");
-            return make_json_response(http::status::ok, R"({"status":"ok"})");
-        }
-
-        if (method == http::verb::patch) {
-            std::string username = extract_json_field(req.body(), "username");
-            std::string role_str = extract_json_field(req.body(), "role");
-            Role role;
-            if (username.empty() || !role_from_string(role_str, role))
-                return make_json_response(http::status::bad_request,
-                    "{\"error\":\"required: username, role (admin|user|viewer|guest)\"}");
-            if (!acl_.set_user_role(username, role))
-                return make_json_response(http::status::not_found,
-                    R"({"error":"user not found"})");
-            return make_json_response(http::status::ok, R"({"status":"ok"})");
-        }
-    }
-
-    return make_response(http::status::not_found, "Not Found");
+    std::unique_lock lock(mutex_);
+    routes_[Key{method, std::move(path)}] = Route{std::move(handler), min_role};
 }
+
+void Router::add_prefix_route(http::verb method, std::string prefix, Handler handler,
+                              std::optional<Role> min_role)
+{
+    std::unique_lock lock(mutex_);
+    for (auto& pr : prefix_routes_) {       // replace an existing (method, prefix)
+        if (pr.method == method && pr.prefix == prefix) {
+            pr.handler  = std::move(handler);
+            pr.min_role = min_role;
+            return;
+        }
+    }
+    prefix_routes_.push_back({method, std::move(prefix), std::move(handler), min_role});
+}
+
+bool Router::set_route_role(const std::string& path, std::optional<Role> min_role)
+{
+    std::unique_lock lock(mutex_);
+    bool found = false;
+    for (auto& [key, route] : routes_) {
+        if (key.second == path) {
+            route.min_role = min_role;
+            found = true;
+        }
+    }
+    return found;
+}
+
+Response Router::dispatch(const Request& req) const
+{
+    // Match on the path only; ignore any query string.
+    auto target = req.target();
+    std::string path(target.data(), target.size());
+    if (auto q = path.find('?'); q != std::string::npos)
+        path.resize(q);
+
+    // Copy what we need out of the table, then release the lock before running
+    // the handler — handlers may call back into the engine (e.g. set_api_role).
+    Handler             handler;
+    std::optional<Role> min_role;
+    {
+        std::shared_lock lock(mutex_);
+        auto it = routes_.find(Key{req.method(), path});
+        if (it != routes_.end()) {
+            handler  = it->second.handler;
+            min_role = it->second.min_role;
+        } else {
+            // No exact route — fall back to the longest matching prefix route.
+            const PrefixRoute* best = nullptr;
+            for (const auto& pr : prefix_routes_) {
+                if (pr.method == req.method() && path.rfind(pr.prefix, 0) == 0)
+                    if (!best || pr.prefix.size() > best->prefix.size())
+                        best = &pr;
+            }
+            if (!best)
+                return text(http::status::not_found, "Not Found");
+            handler  = best->handler;
+            min_role = best->min_role;
+        }
+    }
+
+    RequestContext ctx{req, std::nullopt};
+
+    // Enforce authentication/authorization for protected routes.
+    if (min_role) {
+        auto entry = validated_token(req, tokens_);
+        if (!entry)
+            return json(http::status::unauthorized,
+                glz::write_json(glz::obj{"error", "authentication required"}).value_or(std::string{}));
+        if (!role_satisfies(entry->role, *min_role))
+            return json(http::status::forbidden,
+                glz::write_json(glz::obj{"error", "insufficient permissions"}).value_or(std::string{}));
+        ctx.user = UserInfo{entry->username, entry->role};
+    }
+
+    // Handlers are arbitrary user code; a throw must not escape into io_context::run()
+    // (which would propagate out of a worker thread and call std::terminate). Contain
+    // it and report 500 instead.
+    try {
+        return handler(ctx);
+    } catch (...) {
+        return json(http::status::internal_server_error,
+            glz::write_json(glz::obj{"error", "internal server error"}).value_or(std::string{}));
+    }
+}
+
+} // namespace webengine

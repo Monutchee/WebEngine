@@ -4,26 +4,35 @@
 #include <optional>
 #include <shared_mutex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <mutex>
 
 #include <openssl/rand.h>
 
-#include "AclStore.hpp"
+#include "webengine/Role.hpp"
+
+namespace webengine {
 
 struct TokenEntry {
-    std::string                              username;
-    Role                                     role;
-    std::chrono::steady_clock::time_point    expires_at;
+    std::string                           username;
+    Role                                  role;
+    std::chrono::steady_clock::time_point expires_at;
 };
 
+// Thread-safe in-memory session-token store. Tokens are 256 bits of CSPRNG
+// output, hex-encoded.
 class TokenStore {
 public:
     std::string issue(const std::string& username, Role role,
                       std::chrono::seconds ttl = std::chrono::hours(8))
     {
         unsigned char buf[32];
-        RAND_bytes(buf, sizeof(buf));
+        // Never mint a token from uninitialised memory: RAND_bytes returns 1 only
+        // on success. On failure the caller turns this into a 5xx (see Router).
+        if (RAND_bytes(buf, sizeof(buf)) != 1)
+            throw std::runtime_error("TokenStore: RAND_bytes failed");
 
         std::ostringstream oss;
         for (unsigned char b : buf)
@@ -53,3 +62,5 @@ private:
     std::unordered_map<std::string, TokenEntry> store_;
     mutable std::shared_mutex                   mutex_;
 };
+
+} // namespace webengine

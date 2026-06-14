@@ -1,104 +1,137 @@
 #include "AuthHandler.hpp"
-#include "AclStore.hpp"
+#include "util.hpp"
 
-// All header field values from Boost 1.74 Beast are boost::beast::string_view,
-// not std::string_view — no implicit conversion exists between the two.
+#include <fstream>
+#include <optional>
+#include <sstream>
 
-http::response<http::string_body>
-AuthHandler::handle_login(const http::request<http::string_body>& req)
+#include <glaze/glaze.hpp>
+
+namespace webengine {
+
+namespace {
+
+// Login request body: {"username": ..., "password": ...}.
+struct LoginReq { std::optional<std::string> username; std::optional<std::string> password; };
+
+// Minimal extension → MIME map for the static files this PoC serves. Unknown
+// extensions fall back to a safe binary default.
+std::string content_type_for(const std::string& path) {
+    auto dot = path.rfind('.');
+    std::string ext = (dot == std::string::npos) ? "" : path.substr(dot + 1);
+    if (ext == "html" || ext == "htm") return "text/html";
+    if (ext == "txt")                  return "text/plain";
+    if (ext == "css")                  return "text/css";
+    if (ext == "js")                   return "application/javascript";
+    if (ext == "json")                 return "application/json";
+    if (ext == "svg")                  return "image/svg+xml";
+    if (ext == "png")                  return "image/png";
+    if (ext == "jpg" || ext == "jpeg") return "image/jpeg";
+    if (ext == "ico")                  return "image/x-icon";
+    return "application/octet-stream";
+}
+
+} // namespace
+
+Response AuthHandler::handle_login(const Request& req)
 {
-    const std::string& body = req.body();
-    std::string username = extract_json_field(body, "username");
-    std::string password = extract_json_field(body, "password");
+    LoginReq body{};
+    // Tolerate missing/garbage bodies: on a parse error the fields stay empty and
+    // the credential check below fails with 401, as before.
+    (void) glz::read<glz::opts{.error_on_unknown_keys = false}>(body, req.body());
+    const std::string username = body.username ? *body.username : std::string{};
+    const std::string password = body.password ? *body.password : std::string{};
 
-    Role role;
-    if (username.empty() || !acl_.authenticate(username, password, role))
-        return make_json_response(http::status::unauthorized,
-                                  R"({"error":"invalid credentials"})");
+    std::optional<Role> role;
+    if (username.empty() || !(role = auth_.authenticate(username, password)))
+        return json(http::status::unauthorized,
+            glz::write_json(glz::obj{"error", "invalid credentials"}).value_or(std::string{}));
 
-    std::string token = tokens_.issue(username, role);
+    std::string token = tokens_.issue(username, *role);
 
-    auto res = make_json_response(http::status::ok, R"({"status":"ok"})");
+    auto res = json(http::status::ok, R"({"status":"ok"})");
     res.set(http::field::set_cookie,
             "session=" + token + "; HttpOnly; SameSite=Strict; Path=/");
     return res;
 }
 
-http::response<http::string_body>
-AuthHandler::handle_logout(const http::request<http::string_body>& req)
+Response AuthHandler::handle_logout(const Request& req)
 {
     auto cookie_it = req.find(http::field::cookie);
     if (cookie_it != req.end()) {
-        // cookie_it->value() is beast::string_view — pass directly, extract_cookie accepts it
         std::string token = extract_cookie(cookie_it->value(), "session");
         if (!token.empty())
             tokens_.revoke(token);
     }
 
-    auto res = make_json_response(http::status::ok, R"({"status":"ok"})");
+    auto res = json(http::status::ok, R"({"status":"ok"})");
     res.set(http::field::set_cookie,
             "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
     return res;
 }
 
-http::response<http::string_body>
-AuthHandler::handle_check(const http::request<http::string_body>& req)
+Response AuthHandler::handle_check(const Request& req)
 {
-    std::string token;
-
-    auto cookie_it = req.find(http::field::cookie);
-    if (cookie_it != req.end())
-        token = extract_cookie(cookie_it->value(), "session");
-
-    if (token.empty()) {
-        auto auth_it = req.find(http::field::authorization);
-        if (auth_it != req.end()) {
-            auto hv = auth_it->value();  // beast::string_view
-            // beast::string_view has no starts_with() in Boost 1.74; use substr compare
-            if (hv.size() >= 7 && hv.substr(0, 7) == "Bearer ")
-                token = std::string(hv.data() + 7, hv.size() - 7);
-        }
-    }
-
-    if (token.empty())
-        return make_status_response(http::status::unauthorized);
-
-    auto entry = tokens_.validate(token);
+    auto entry = validated_token(req, tokens_);
     if (!entry)
-        return make_status_response(http::status::unauthorized);
+        return status_response(http::status::unauthorized);
 
     auto uri_it = req.find("X-Original-URI");
     if (uri_it != req.end() && !uri_it->value().empty()) {
-        // Convert beast::string_view to std::string for AclStore
         std::string uri(uri_it->value().data(), uri_it->value().size());
         if (!acl_.authorize(entry->role, uri))
-            return make_status_response(http::status::forbidden);
+            return status_response(http::status::forbidden);
     }
 
-    auto res = make_status_response(http::status::ok);
+    auto res = status_response(http::status::ok);
     res.set("X-User", entry->username);
     res.set("X-Role", role_name(entry->role));
     return res;
 }
 
-std::optional<TokenEntry>
-AuthHandler::get_token_entry(const http::request<http::string_body>& req) const
+Response AuthHandler::handle_protected_file(const Request& req,
+                                            const std::string& fs_root,
+                                            const std::string& url_prefix)
 {
-    std::string token;
+    // Path only; drop any query string.
+    auto target = req.target();
+    std::string path(target.data(), target.size());
+    if (auto q = path.find('?'); q != std::string::npos)
+        path.resize(q);
 
-    auto cookie_it = req.find(http::field::cookie);
-    if (cookie_it != req.end())
-        token = extract_cookie(cookie_it->value(), "session");
-
-    if (token.empty()) {
-        auto auth_it = req.find(http::field::authorization);
-        if (auth_it != req.end()) {
-            auto hv = auth_it->value();
-            if (hv.size() >= 7 && hv.substr(0, 7) == "Bearer ")
-                token = std::string(hv.data() + 7, hv.size() - 7);
-        }
+    // Authn: no/invalid token → redirect to the login page (matches nginx's
+    // `error_page 401 = @login_redirect` for /protected/).
+    auto entry = validated_token(req, tokens_);
+    if (!entry) {
+        Response res{http::status::found, req.version()};
+        res.set(http::field::location, "/?reason=unauthenticated");
+        res.prepare_payload();
+        return res;
     }
 
-    if (token.empty()) return std::nullopt;
-    return tokens_.validate(token);
+    // Authz: the same longest-prefix ACL /auth-check consults.
+    if (!acl_.authorize(entry->role, path))
+        return text(http::status::forbidden, "Access denied");
+
+    // Map URL → filesystem path. Reject any parent-dir escape before touching disk.
+    std::string rel = path.size() > url_prefix.size() ? path.substr(url_prefix.size())
+                                                      : std::string();
+    if (rel.empty() || rel.back() == '/') rel += "index.html";
+    if (rel.find("..") != std::string::npos)
+        return text(http::status::forbidden, "Access denied");
+    while (!rel.empty() && rel.front() == '/') rel.erase(rel.begin());
+
+    std::string file = fs_root;
+    if (!file.empty() && file.back() == '/') file.pop_back();
+    file += "/" + rel;
+
+    std::ifstream in(file, std::ios::binary);
+    if (!in)
+        return text(http::status::not_found, "Not Found");
+    std::ostringstream ss;
+    ss << in.rdbuf();
+
+    return make_response(http::status::ok, ss.str(), content_type_for(rel));
 }
+
+} // namespace webengine

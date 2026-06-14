@@ -1,36 +1,47 @@
 #pragma once
-#include <boost/beast/http.hpp>
-#include "AclStore.hpp"
+#include "webengine/AuthProvider.hpp"
+#include "webengine/Http.hpp"
+#include "Acl.hpp"
 #include "TokenStore.hpp"
-#include "util.hpp"
 
-namespace http = boost::beast::http;
+namespace webengine {
 
+// Implements the built-in authentication endpoints. Owned by the engine and
+// wired to the pluggable AuthProvider, the session-token store and the
+// static-path ACL.
 class AuthHandler {
 public:
-    AuthHandler(AclStore& acl, TokenStore& tokens)
-        : acl_(acl), tokens_(tokens) {}
+    AuthHandler(AuthProvider& auth, TokenStore& tokens, Acl& acl)
+        : auth_(auth), tokens_(tokens), acl_(acl) {}
 
-    // POST /api/login — validates credentials, issues session cookie on success.
-    http::response<http::string_body>
-    handle_login(const http::request<http::string_body>& req);
+    // POST /api/login — validates credentials, issues a session cookie on success.
+    Response handle_login(const Request& req);
 
     // POST /api/logout — revokes the session cookie.
-    http::response<http::string_body>
-    handle_logout(const http::request<http::string_body>& req);
+    Response handle_logout(const Request& req);
 
     // GET /auth-check — called internally by nginx auth_request.
-    // Returns 200 (allow), 401 (not authenticated), or 403 (forbidden).
-    http::response<http::string_body>
-    handle_check(const http::request<http::string_body>& req);
+    // Returns 200 (allow), 401 (not authenticated) or 403 (forbidden), and on
+    // success echoes the user/role back in X-User / X-Role headers.
+    Response handle_check(const Request& req);
 
-    // Extracts and validates the session token from the request (cookie or
-    // Authorization: Bearer header). Returns nullopt if missing or expired.
-    // Used by API routes that enforce auth themselves instead of via nginx.
-    std::optional<TokenEntry>
-    get_token_entry(const http::request<http::string_body>& req) const;
+    // GET <gated subtree> — serve a static file with the SAME session-token + ACL
+    // gate that handle_check applies, for a reverse proxy that lacks auth_request
+    // (lighttpd). The file is read from `fs_root` joined with the request path
+    // minus `url_prefix`. Behaviour mirrors the nginx /protected/ flow:
+    //   no/invalid token   -> 302 redirect to "/?reason=unauthenticated"
+    //   ACL denies the role-> 403 "Access denied"
+    //   authorized + found -> 200 with the file body and a content-type by extension
+    //   authorized, missing-> 404
+    // Path traversal ("..") is rejected.
+    Response handle_protected_file(const Request& req,
+                                   const std::string& fs_root,
+                                   const std::string& url_prefix);
 
 private:
-    AclStore&    acl_;
-    TokenStore&  tokens_;
+    AuthProvider& auth_;
+    TokenStore&   tokens_;
+    Acl&          acl_;
 };
+
+} // namespace webengine

@@ -10,9 +10,28 @@ http:
     type: json
     data: |-
       {
-          "username": "admin"
-          "password": "admin123"
+          "username": "{{login_username}}"
+          "password": "{{login_passwd}}"
       }
+
+runtime:
+  variables:
+    - name: login_username
+      value: admin
+    - name: login_passwd
+      value: admin123
+    - name: login_username
+      value: alice
+      disabled: true
+    - name: login_passwd
+      value: user123
+      disabled: true
+    - name: login_username
+      value: viewer
+      disabled: true
+    - name: login_passwd
+      value: viewer123
+      disabled: true
 
 settings:
   encodeUrl: true
