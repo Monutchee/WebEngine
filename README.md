@@ -1,4 +1,4 @@
-# Nginx-front-back-end-interaction-demo
+# WebEngine
 
 
 
@@ -32,7 +32,12 @@ cmake --build build --parallel
 
 CMake uses an existing Glaze package when one is provided by the build
 environment, as in Docker or Yocto. Otherwise, local builds automatically fetch
-Glaze 7.7.1 into `backend/build/_deps`; nothing is installed into `/usr/local`.
+Glaze 7.9.0 into `backend/build/_deps`; nothing is installed into `/usr/local`.
+
+Parent projects can supply `glaze::glaze` before adding `backend/` with
+`add_subdirectory()`. Set `WEBENGINE_FETCH_DEPS=OFF` to prohibit network
+fallbacks and `WEBENGINE_BUILD_EXAMPLE=OFF` when embedding only the reusable
+`webengine::webengine` target.
 
 
 
