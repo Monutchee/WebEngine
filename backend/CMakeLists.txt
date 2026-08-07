@@ -21,23 +21,23 @@ find_package(Threads REQUIRED)
 # Prefer a target supplied by the parent project, then an installed package.
 # FetchContent remains an explicit convenience fallback for standalone builds.
 if(NOT TARGET glaze::glaze)
-    find_package(glaze 7.9.0 CONFIG QUIET)
+    find_package(glaze 8.0.0 CONFIG QUIET)
 endif()
 if(NOT TARGET glaze::glaze AND WEBENGINE_FETCH_DEPS)
     include(FetchContent)
-    message(STATUS "Glaze 7.9.0 was not found; fetching it into the build directory")
+    message(STATUS "Glaze 8.0.0 was not found; fetching it into the build directory")
     set(glaze_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(glaze_DEVELOPER_MODE OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(glaze
         GIT_REPOSITORY https://github.com/stephenberry/glaze.git
-        GIT_TAG v7.9.0
+        GIT_TAG v8.0.0
         GIT_SHALLOW TRUE
     )
     FetchContent_MakeAvailable(glaze)
 endif()
 if(NOT TARGET glaze::glaze)
     message(FATAL_ERROR
-        "WebEngine requires glaze::glaze (Glaze 7.9.0 or newer). "
+        "WebEngine requires glaze::glaze (Glaze 8.0.0 or newer). "
         "Provide the target or enable WEBENGINE_FETCH_DEPS.")
 endif()
 
