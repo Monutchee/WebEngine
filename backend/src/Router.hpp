@@ -25,7 +25,8 @@ public:
 
     // Register/replace a handler for (method, path).
     void add_route(http::verb method, std::string path, Handler handler,
-                   std::optional<Role> min_role);
+                   std::optional<Role> min_role,
+                   std::optional<std::size_t> max_body_bytes = std::nullopt);
 
     // Register/replace a prefix handler for `method`: it matches any request whose
     // path starts with `prefix` when no exact (method, path) route matches. Longest
@@ -41,11 +42,14 @@ public:
 
     // Match, authorize and invoke. Never throws; always returns a response.
     Response dispatch(const Request& req) const;
+    std::optional<std::size_t> body_limit(
+        http::verb method, std::string_view target) const;
 
 private:
     struct Route {
         Handler             handler;
         std::optional<Role> min_role; // nullopt → public
+        std::optional<std::size_t> max_body_bytes;
     };
 
     struct PrefixRoute {

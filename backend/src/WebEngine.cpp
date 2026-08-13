@@ -1,6 +1,7 @@
 #include "webengine/WebEngine.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <csignal>
 #include <memory>
 #include <optional>
@@ -40,6 +41,18 @@ struct AddUserReq  { std::optional<std::string> username; std::optional<std::str
                      std::optional<std::string> role; };
 struct UsernameReq { std::optional<std::string> username; };
 struct SetRoleReq  { std::optional<std::string> username; std::optional<std::string> role; };
+
+bool safe_file_name(std::string_view name)
+{
+    return !name.empty() && name != "." && name != ".." &&
+        name.find('/') == std::string_view::npos &&
+        name.find('\\') == std::string_view::npos &&
+        name.find('"') == std::string_view::npos &&
+        name.find(';') == std::string_view::npos &&
+        !std::ranges::any_of(name, [](unsigned char value) {
+            return std::iscntrl(value) != 0;
+        });
+}
 
 AclListView to_view(const std::vector<AclEntry>& entries) {
     AclListView v;
@@ -105,6 +118,71 @@ WebEngine& WebEngine::add_api(http::verb method, std::string path, Handler handl
 {
     impl_->router.add_route(method, std::move(path), std::move(handler), min_role);
     return *this;
+}
+
+WebEngine& WebEngine::add_file_upload(
+    std::string path, FileUploadHandler handler, std::optional<Role> min_role,
+    std::size_t max_body_bytes, std::vector<std::string> content_types)
+{
+    if (!handler || max_body_bytes == 0)
+        throw std::invalid_argument("file upload route requires a handler and limit");
+    impl_->router.add_route(http::verb::put, std::move(path),
+        [handler = std::move(handler), types = std::move(content_types),
+         max_body_bytes](const RequestContext& context) {
+            const auto header = context.request.find("X-File-Name");
+            if (header == context.request.end())
+                return text(http::status::bad_request,
+                    "X-File-Name is required");
+            const std::string name(header->value());
+            if (!safe_file_name(name))
+                return text(http::status::bad_request,
+                    "invalid upload file name");
+            const std::string content_type =
+                context.request[http::field::content_type];
+            if (!types.empty() &&
+                std::ranges::find(types, content_type) == types.end())
+                return text(http::status::unsupported_media_type,
+                    "unsupported upload content type");
+            if (context.request.body().size() > max_body_bytes)
+                return text(http::status::payload_too_large,
+                    "upload exceeds route limit");
+            return handler(context,
+                FileUpload{name, content_type, context.request.body()});
+        }, min_role, max_body_bytes);
+    return *this;
+}
+
+WebEngine& WebEngine::add_file_download(
+    std::string path, FileDownloadHandler handler,
+    std::optional<Role> min_role)
+{
+    if (!handler)
+        throw std::invalid_argument("file download route requires a handler");
+    return add_api(http::verb::get, std::move(path),
+        [handler = std::move(handler)](const RequestContext& context) {
+            const auto file = handler(context);
+            if (!file)
+                return text(http::status::not_found,
+                    "file is not configured");
+            if (!safe_file_name(file->file_name))
+                return text(http::status::internal_server_error,
+                    "download handler returned an invalid file name");
+            if (file->content_type.empty() ||
+                std::ranges::any_of(file->content_type,
+                    [](unsigned char value) { return std::iscntrl(value) != 0; }))
+                return text(http::status::internal_server_error,
+                    "download handler returned an invalid content type");
+            Response response{http::status::ok, context.request.version()};
+            response.set(http::field::content_type, file->content_type);
+            response.set("Content-Disposition",
+                "attachment; filename=\"" + file->file_name + "\"");
+            response.set(http::field::cache_control, "no-store");
+            response.set(http::field::pragma, "no-cache");
+            response.set(http::field::expires, "0");
+            response.body() = file->contents;
+            response.prepare_payload();
+            return response;
+        }, min_role);
 }
 
 WebEngine& WebEngine::set_api_role(const std::string& path, std::optional<Role> min_role)

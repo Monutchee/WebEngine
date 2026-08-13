@@ -87,6 +87,37 @@ See the full working example in [`backend/example/main.cpp`](backend/example/mai
 | `NginxController.hpp` | `WebServerController` for nginx (graceful, zero-downtime reload). |
 | `LighttpdController.hpp` | `WebServerController` for lighttpd — the lighter proxy for older/embedded platforms. |
 
+### Authenticated binary file transfer
+
+Applications can register bounded binary upload and download routes without
+teaching WebEngine what the files represent:
+
+```cpp
+engine.add_file_upload(
+    "/api/v1/certificates/ca",
+    [](const RequestContext&, const FileUpload& upload) {
+        install_certificate(upload.file_name, upload.contents);
+        return json(http::status::ok, R"({"saved":true})");
+    },
+    Role::Admin,
+    1024 * 1024,
+    {"application/octet-stream", "application/x-pem-file"});
+
+engine.add_file_download(
+    "/api/v1/certificates/ca",
+    [](const RequestContext&) -> std::optional<FileDownload> {
+        return FileDownload{"ca.pem", "application/x-pem-file", load_ca()};
+    },
+    Role::Admin);
+```
+
+Upload requests use the raw request body and provide the original basename in
+`X-File-Name`. WebEngine authenticates the request before calling the handler,
+checks the per-route body limit while reading, rejects unsafe filenames and
+unsupported content types, and never interprets or writes the file. Downloads
+set attachment and no-cache headers. Product code remains responsible for
+validating the file contents and forwarding them to its owning service.
+
 ### Reverse-proxy control (`WebServerController`)
 
 The backend **owns its reverse proxy**: it starts, stops, restarts and re-ports
