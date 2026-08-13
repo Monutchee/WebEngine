@@ -9,9 +9,9 @@ void Session::run() { do_read(); }
 
 void Session::do_read()
 {
-    req_ = {};
+    parser_.emplace();
     auto self = shared_from_this();
-    http::async_read(socket_, buffer_, req_,
+    http::async_read_header(socket_, buffer_, *parser_,
         [self](beast::error_code ec, std::size_t)
         {
             if (ec == http::error::end_of_stream) {
@@ -20,9 +20,29 @@ void Session::do_read()
                 return;
             }
             if (ec) return;
+            const auto& request = self->parser_->get();
+            if (const auto limit = self->router_.body_limit(
+                    request.method(), request.target()))
+                self->parser_->body_limit(*limit);
+            self->do_read_body();
+        });
+}
 
-            bool keep_alive = self->req_.keep_alive();
-            auto res = self->router_.dispatch(self->req_);
+void Session::do_read_body()
+{
+    auto self = shared_from_this();
+    http::async_read(socket_, buffer_, *parser_,
+        [self](beast::error_code ec, std::size_t)
+        {
+            if (ec == http::error::body_limit) {
+                self->do_write(text(http::status::payload_too_large,
+                    "request body exceeds route limit"), false);
+                return;
+            }
+            if (ec) return;
+            auto request = self->parser_->release();
+            bool keep_alive = request.keep_alive();
+            auto res = self->router_.dispatch(request);
             res.keep_alive(keep_alive);
             res.prepare_payload();
             self->do_write(std::move(res), keep_alive);

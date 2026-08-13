@@ -4,6 +4,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/asio/local/stream_protocol.hpp>
 #include <memory>
+#include <optional>
 #include "Router.hpp"
 
 namespace webengine {
@@ -20,11 +21,12 @@ public:
 
 private:
     void do_read();
+    void do_read_body();
     void do_write(Response res, bool keep_alive);
 
     uds::socket        socket_;
     beast::flat_buffer buffer_;
-    Request            req_;
+    std::optional<http::request_parser<http::string_body>> parser_;
     Router&            router_;
 };
 

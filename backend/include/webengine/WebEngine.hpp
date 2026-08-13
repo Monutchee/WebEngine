@@ -1,7 +1,9 @@
 #pragma once
 #include <memory>
+#include <cstddef>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "AuthProvider.hpp"
 #include "Http.hpp"
@@ -50,6 +52,16 @@ public:
     //                               401, under-privileged callers get 403.
     WebEngine& add_api(http::verb method, std::string path, Handler handler,
                        std::optional<Role> min_role = std::nullopt);
+
+    WebEngine& add_file_upload(
+        std::string path, FileUploadHandler handler,
+        std::optional<Role> min_role = Role::Admin,
+        std::size_t max_body_bytes = 1024u * 1024u,
+        std::vector<std::string> content_types = {});
+
+    WebEngine& add_file_download(
+        std::string path, FileDownloadHandler handler,
+        std::optional<Role> min_role = Role::Admin);
 
     // Change the minimum role required for every method registered at `path`.
     // Pass std::nullopt to make the endpoint public again. Returns *this; the
