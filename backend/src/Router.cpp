@@ -6,10 +6,24 @@
 namespace webengine {
 
 void Router::add_route(http::verb method, std::string path, Handler handler,
-                       std::optional<Role> min_role)
+                       std::optional<Role> min_role,
+                       std::optional<std::size_t> max_body_bytes)
 {
     std::unique_lock lock(mutex_);
-    routes_[Key{method, std::move(path)}] = Route{std::move(handler), min_role};
+    routes_[Key{method, std::move(path)}] =
+        Route{std::move(handler), min_role, max_body_bytes};
+}
+
+std::optional<std::size_t> Router::body_limit(
+    http::verb method, std::string_view target) const
+{
+    std::string path(target);
+    if (auto query = path.find('?'); query != std::string::npos)
+        path.resize(query);
+    std::shared_lock lock(mutex_);
+    const auto route = routes_.find(Key{method, path});
+    return route == routes_.end() ? std::nullopt
+                                 : route->second.max_body_bytes;
 }
 
 void Router::add_prefix_route(http::verb method, std::string prefix, Handler handler,

@@ -2,6 +2,7 @@
 #include <utility>               // must precede boost — Boost 1.74 awaitable.hpp uses std::exchange without including <utility>
 #include <boost/beast/http.hpp>
 #include <functional>
+#include <cstddef>
 #include <optional>
 #include <string>
 
@@ -27,6 +28,25 @@ struct RequestContext {
 // A request handler: maps a context to a response. Register one with
 // WebEngine::add_api().
 using Handler = std::function<Response(const RequestContext&)>;
+
+/** Validated binary upload delivered to product code. */
+struct FileUpload {
+    std::string file_name;
+    std::string content_type;
+    std::string contents;
+};
+
+/** Binary file returned by a product download handler. */
+struct FileDownload {
+    std::string file_name;
+    std::string content_type{"application/octet-stream"};
+    std::string contents;
+};
+
+using FileUploadHandler = std::function<Response(
+    const RequestContext&, const FileUpload&)>;
+using FileDownloadHandler = std::function<std::optional<FileDownload>(
+    const RequestContext&)>;
 
 // ── Response builders ─────────────────────────────────────────────────────────
 
