@@ -71,7 +71,7 @@ int main()
         .add_streaming_download(
             "/capture",
             [source, trace](const webengine::RequestContext&)
-                -> std::optional<webengine::StreamingDownload> {
+                -> webengine::HandlerResult {
                 return webengine::StreamingDownload{
                     "capture.mncwf",
                     "application/x-mncwf",

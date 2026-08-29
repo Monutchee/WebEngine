@@ -66,12 +66,12 @@ using FileUploadHandler = std::function<Response(
     const RequestContext&, const FileUpload&)>;
 using FileDownloadHandler = std::function<std::optional<FileDownload>(
     const RequestContext&)>;
-using StreamingDownloadHandler = std::function<std::optional<StreamingDownload>(
-    const RequestContext&)>;
 
-// Internal transport result. Handler remains Response-only for source
-// compatibility; the router also accepts streaming-download factories.
+// Handler remains Response-only for source compatibility. Streaming handlers
+// may instead return an ordinary error/status response from request validation.
 using HandlerResult = std::variant<Response, StreamingDownload>;
+using StreamingDownloadHandler = std::function<HandlerResult(
+    const RequestContext&)>;
 
 // ── Response builders ─────────────────────────────────────────────────────────
 

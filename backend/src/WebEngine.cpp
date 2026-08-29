@@ -201,24 +201,24 @@ WebEngine& WebEngine::add_streaming_download(
     impl_->router.add_route(http::verb::get, std::move(path),
         [handler = std::move(handler)](const RequestContext& context)
             -> HandlerResult {
-            auto file = handler(context);
-            if (!file)
-                return text(http::status::not_found,
-                    "file is not configured");
-            if (!safe_file_name(file->file_name))
+            auto result = handler(context);
+            if (std::holds_alternative<Response>(result))
+                return result;
+            auto& file = std::get<StreamingDownload>(result);
+            if (!safe_file_name(file.file_name))
                 return text(http::status::internal_server_error,
                     "download handler returned an invalid file name");
-            if (file->content_type.empty() ||
-                std::ranges::any_of(file->content_type,
+            if (file.content_type.empty() ||
+                std::ranges::any_of(file.content_type,
                     [](unsigned char value) {
                         return std::iscntrl(value) != 0;
                     }))
                 return text(http::status::internal_server_error,
                     "download handler returned an invalid content type");
-            if (!file->read && file->content_length != 0)
+            if (!file.read && file.content_length != 0)
                 return text(http::status::internal_server_error,
                     "download handler returned no stream reader");
-            return std::move(*file);
+            return result;
         }, min_role);
     return *this;
 }
