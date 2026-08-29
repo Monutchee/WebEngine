@@ -80,7 +80,7 @@ See the full working example in [`backend/example/main.cpp`](backend/example/mai
 | --- | --- |
 | `AuthProvider.hpp` | Abstract user store: implement `authenticate()`; optionally override the user-management hooks. |
 | `TestAuthProvider.hpp` | Ready-made in-memory provider (PBKDF2-hashed), seeded with the test accounts below. |
-| `WebEngine.hpp` | The engine: `add_api`, `set_api_role`, `protect_path`, `serve_protected_files`, `enable_auth_endpoints`, `enable_admin_endpoints`, `set_socket_path`, `run`/`stop`. |
+| `WebEngine.hpp` | The engine: `add_api`, bounded file-transfer routes, `set_api_role`, `protect_path`, `serve_protected_files`, built-in endpoints, socket configuration, and lifecycle. |
 | `Http.hpp` | `Request`/`Response`/`RequestContext`/`Handler` types and `json()`/`text()` response builders. |
 | `Role.hpp` | The `Role` enum (`Guest < Viewer < User < Admin`). |
 | `WebServerController.hpp` | Abstract interface for controlling the reverse proxy (`on`/`off`/`reset`/`reload`/`set_listen_port`/`is_running`/…), plus `make_web_server_controller()` and `web_server_from_string()`. |
@@ -109,14 +109,29 @@ engine.add_file_download(
         return FileDownload{"ca.pem", "application/x-pem-file", load_ca()};
     },
     Role::Admin);
+
+auto generated = std::make_shared<GeneratedFile>(make_generated_file());
+engine.add_streaming_download(
+    "/api/v1/captures/export",
+    [generated](const RequestContext&) -> std::optional<StreamingDownload> {
+        return StreamingDownload{
+            "capture.mncwf", "application/x-mncwf", generated->size(),
+            [generated](std::uint64_t offset, std::span<std::byte> destination) {
+                return generated->read(offset, destination);
+            }};
+    },
+    Role::Admin);
 ```
 
 Upload requests use the raw request body and provide the original basename in
 `X-File-Name`. WebEngine authenticates the request before calling the handler,
 checks the per-route body limit while reading, rejects unsafe filenames and
 unsupported content types, and never interprets or writes the file. Downloads
-set attachment and no-cache headers. Product code remains responsible for
-validating the file contents and forwarding them to its owning service.
+set attachment and no-cache headers. `add_file_download` is convenient for
+small in-memory objects; `add_streaming_download` repeatedly invokes a bounded
+reader with monotonic offsets and sends a fixed-length response without first
+assembling the object in a Beast `string_body`. Product code remains responsible
+for validating the file contents and forwarding them to its owning service.
 
 ### Reverse-proxy control (`WebServerController`)
 

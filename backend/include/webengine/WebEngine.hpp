@@ -63,6 +63,13 @@ public:
         std::string path, FileDownloadHandler handler,
         std::optional<Role> min_role = Role::Admin);
 
+    // Register a fixed-length binary download whose bytes are supplied in
+    // bounded chunks. The response is never assembled in a string_body, so
+    // large generated files can be served without a second full-size buffer.
+    WebEngine& add_streaming_download(
+        std::string path, StreamingDownloadHandler handler,
+        std::optional<Role> min_role = Role::Admin);
+
     // Change the minimum role required for every method registered at `path`.
     // Pass std::nullopt to make the endpoint public again. Returns *this; the
     // change applies immediately, even while serving. No-op if no such path.

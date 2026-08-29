@@ -1,10 +1,13 @@
 #pragma once
 #include <utility>               // must precede boost — Boost 1.74 awaitable.hpp uses std::exchange without including <utility>
 #include <boost/beast/http.hpp>
-#include <functional>
 #include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <optional>
+#include <span>
 #include <string>
+#include <variant>
 
 #include "AuthProvider.hpp"      // UserInfo
 #include "Role.hpp"
@@ -43,10 +46,32 @@ struct FileDownload {
     std::string contents;
 };
 
+/**
+ * Binary file generated or read incrementally by product code.
+ *
+ * WebEngine calls read() with monotonically increasing offsets and a bounded
+ * destination buffer until exactly content_length bytes have been returned.
+ * The callback must return at least one byte while data remains and must never
+ * return more than the supplied destination span. It may retain shared state
+ * in its closure; WebEngine keeps the callback alive for the whole response.
+ */
+struct StreamingDownload {
+    std::string file_name;
+    std::string content_type{"application/octet-stream"};
+    std::uint64_t content_length{};
+    std::function<std::size_t(std::uint64_t, std::span<std::byte>)> read;
+};
+
 using FileUploadHandler = std::function<Response(
     const RequestContext&, const FileUpload&)>;
 using FileDownloadHandler = std::function<std::optional<FileDownload>(
     const RequestContext&)>;
+using StreamingDownloadHandler = std::function<std::optional<StreamingDownload>(
+    const RequestContext&)>;
+
+// Internal transport result. Handler remains Response-only for source
+// compatibility; the router also accepts streaming-download factories.
+using HandlerResult = std::variant<Response, StreamingDownload>;
 
 // ── Response builders ─────────────────────────────────────────────────────────
 
