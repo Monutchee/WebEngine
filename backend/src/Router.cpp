@@ -5,7 +5,7 @@
 
 namespace webengine {
 
-void Router::add_route(http::verb method, std::string path, Handler handler,
+void Router::add_route(http::verb method, std::string path, RouteHandler handler,
                        std::optional<Role> min_role,
                        std::optional<std::size_t> max_body_bytes)
 {
@@ -26,7 +26,8 @@ std::optional<std::size_t> Router::body_limit(
                                  : route->second.max_body_bytes;
 }
 
-void Router::add_prefix_route(http::verb method, std::string prefix, Handler handler,
+void Router::add_prefix_route(http::verb method, std::string prefix,
+                              RouteHandler handler,
                               std::optional<Role> min_role)
 {
     std::unique_lock lock(mutex_);
@@ -53,7 +54,7 @@ bool Router::set_route_role(const std::string& path, std::optional<Role> min_rol
     return found;
 }
 
-Response Router::dispatch(const Request& req) const
+HandlerResult Router::dispatch(const Request& req) const
 {
     // Match on the path only; ignore any query string.
     auto target = req.target();
@@ -63,7 +64,7 @@ Response Router::dispatch(const Request& req) const
 
     // Copy what we need out of the table, then release the lock before running
     // the handler — handlers may call back into the engine (e.g. set_api_role).
-    Handler             handler;
+    RouteHandler        handler;
     std::optional<Role> min_role;
     {
         std::shared_lock lock(mutex_);

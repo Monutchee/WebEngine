@@ -116,7 +116,13 @@ WebEngine& WebEngine::operator=(WebEngine&&) noexcept = default;
 WebEngine& WebEngine::add_api(http::verb method, std::string path, Handler handler,
                               std::optional<Role> min_role)
 {
-    impl_->router.add_route(method, std::move(path), std::move(handler), min_role);
+    if (!handler)
+        throw std::invalid_argument("API route requires a handler");
+    impl_->router.add_route(method, std::move(path),
+        [handler = std::move(handler)](const RequestContext& context)
+            -> HandlerResult {
+            return handler(context);
+        }, min_role);
     return *this;
 }
 
@@ -183,6 +189,38 @@ WebEngine& WebEngine::add_file_download(
             response.prepare_payload();
             return response;
         }, min_role);
+}
+
+WebEngine& WebEngine::add_streaming_download(
+    std::string path, StreamingDownloadHandler handler,
+    std::optional<Role> min_role)
+{
+    if (!handler)
+        throw std::invalid_argument(
+            "streaming download route requires a handler");
+    impl_->router.add_route(http::verb::get, std::move(path),
+        [handler = std::move(handler)](const RequestContext& context)
+            -> HandlerResult {
+            auto file = handler(context);
+            if (!file)
+                return text(http::status::not_found,
+                    "file is not configured");
+            if (!safe_file_name(file->file_name))
+                return text(http::status::internal_server_error,
+                    "download handler returned an invalid file name");
+            if (file->content_type.empty() ||
+                std::ranges::any_of(file->content_type,
+                    [](unsigned char value) {
+                        return std::iscntrl(value) != 0;
+                    }))
+                return text(http::status::internal_server_error,
+                    "download handler returned an invalid content type");
+            if (!file->read && file->content_length != 0)
+                return text(http::status::internal_server_error,
+                    "download handler returned no stream reader");
+            return std::move(*file);
+        }, min_role);
+    return *this;
 }
 
 WebEngine& WebEngine::set_api_role(const std::string& path, std::optional<Role> min_role)

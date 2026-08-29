@@ -3,6 +3,7 @@
 #include <optional>
 #include <shared_mutex>
 #include <string>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -21,10 +22,12 @@ namespace webengine {
 // or re-roled while the engine is serving.
 class Router {
 public:
+    using RouteHandler = std::function<HandlerResult(const RequestContext&)>;
+
     explicit Router(TokenStore& tokens) : tokens_(tokens) {}
 
     // Register/replace a handler for (method, path).
-    void add_route(http::verb method, std::string path, Handler handler,
+    void add_route(http::verb method, std::string path, RouteHandler handler,
                    std::optional<Role> min_role,
                    std::optional<std::size_t> max_body_bytes = std::nullopt);
 
@@ -33,21 +36,23 @@ public:
     // matching prefix wins. Used to serve a gated static subtree (see
     // WebEngine::serve_protected_files). The handler itself enforces any
     // authorization (so min_role is typically nullopt here).
-    void add_prefix_route(http::verb method, std::string prefix, Handler handler,
+    void add_prefix_route(http::verb method, std::string prefix,
+                          RouteHandler handler,
                           std::optional<Role> min_role);
 
     // Set the minimum role for every method registered at `path`.
     // Returns true if at least one route matched.
     bool set_route_role(const std::string& path, std::optional<Role> min_role);
 
-    // Match, authorize and invoke. Never throws; always returns a response.
-    Response dispatch(const Request& req) const;
+    // Match, authorize and invoke. Never throws; always returns a transport
+    // result (ordinary response or fixed-length streaming download).
+    HandlerResult dispatch(const Request& req) const;
     std::optional<std::size_t> body_limit(
         http::verb method, std::string_view target) const;
 
 private:
     struct Route {
-        Handler             handler;
+        RouteHandler        handler;
         std::optional<Role> min_role; // nullopt → public
         std::optional<std::size_t> max_body_bytes;
     };
@@ -55,7 +60,7 @@ private:
     struct PrefixRoute {
         http::verb          method;
         std::string         prefix;
-        Handler             handler;
+        RouteHandler        handler;
         std::optional<Role> min_role;
     };
 
