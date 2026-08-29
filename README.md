@@ -113,7 +113,7 @@ engine.add_file_download(
 auto generated = std::make_shared<GeneratedFile>(make_generated_file());
 engine.add_streaming_download(
     "/api/v1/captures/export",
-    [generated](const RequestContext&) -> std::optional<StreamingDownload> {
+    [generated](const RequestContext&) -> HandlerResult {
         return StreamingDownload{
             "capture.mncwf", "application/x-mncwf", generated->size(),
             [generated](std::uint64_t offset, std::span<std::byte> destination) {
