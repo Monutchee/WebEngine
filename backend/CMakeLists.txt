@@ -5,11 +5,16 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 set(_webengine_build_example_default OFF)
+set(_webengine_build_tests_default OFF)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(_webengine_build_example_default ON)
+    set(_webengine_build_tests_default ON)
+    include(CTest)
 endif()
 option(WEBENGINE_BUILD_EXAMPLE "Build the WebEngine example backend"
        ${_webengine_build_example_default})
+option(WEBENGINE_BUILD_TESTS "Build WebEngine integration tests"
+       ${_webengine_build_tests_default})
 option(WEBENGINE_FETCH_DEPS
        "Fetch Glaze when a parent project or package manager did not provide it"
        ON)
@@ -85,4 +90,18 @@ if(WEBENGINE_BUILD_EXAMPLE)
     # The example calls Glaze directly; WebEngine itself keeps Glaze private.
     target_link_libraries(backend PRIVATE webengine::webengine glaze::glaze)
     target_compile_features(backend PRIVATE cxx_std_23)
+endif()
+
+if(WEBENGINE_BUILD_TESTS)
+    add_executable(webengine_streaming_download_test
+        tests/streaming_download_test.cpp)
+    target_link_libraries(webengine_streaming_download_test
+        PRIVATE webengine::webengine)
+    target_compile_features(webengine_streaming_download_test PRIVATE cxx_std_23)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(webengine_streaming_download_test
+            PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME webengine_streaming_download
+             COMMAND webengine_streaming_download_test)
 endif()
