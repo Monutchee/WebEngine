@@ -217,3 +217,10 @@ admin / admin123
 or 
 alice / user123
 ```
+
+## License
+
+Monutchee-owned code is available under **GPL-3.0-only or a separately agreed
+commercial license**, subject to existing third-party notices. See
+[LICENSE](LICENSE), [LICENSING.md](LICENSING.md), and
+[COMMERCIAL.md](COMMERCIAL.md).
