@@ -2,6 +2,7 @@
 #include "webengine/AuthProvider.hpp"
 #include "webengine/Http.hpp"
 #include "Acl.hpp"
+#include "AuthObservation.hpp"
 #include "TokenStore.hpp"
 
 namespace webengine {
@@ -11,8 +12,8 @@ namespace webengine {
 // static-path ACL.
 class AuthHandler {
 public:
-    AuthHandler(AuthProvider& auth, TokenStore& tokens, Acl& acl)
-        : auth_(auth), tokens_(tokens), acl_(acl) {}
+    AuthHandler(AuthProvider& auth, TokenStore& tokens, Acl& acl, AuthObservation& observation)
+        : auth_(auth), tokens_(tokens), acl_(acl), observation_(observation) {}
 
     // POST /api/login — validates credentials, issues a session cookie on success.
     Response handle_login(const Request& req);
@@ -42,6 +43,7 @@ private:
     AuthProvider& auth_;
     TokenStore&   tokens_;
     Acl&          acl_;
+    AuthObservation& observation_;
 };
 
 } // namespace webengine
