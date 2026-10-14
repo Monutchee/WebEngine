@@ -107,6 +107,19 @@ int main() {
             };
             return value;
         }, Role::Viewer, 1);
+    engine.add_websocket("/duplex", [](const auto&) -> std::variant<Response,WebSocketUpgrade> {
+        WebSocketUpgrade value;
+        value.attach=[](auto) {return std::shared_ptr<void>{};};
+        value.receive=[](auto sink,std::string message) {
+            if(message=="burst") {
+                sink->send_control("ack-a"); sink->send_control("ack-b");
+                sink->send_keyed("a","old-a"); sink->send_keyed("b","new-b");
+                sink->send_keyed("a","new-a"); sink->send_keyed("gone","gone");
+                sink->discard_key("gone"); sink->send_if_idle("heartbeat");
+            } else if(message=="overload") for(int i=0;i<65;++i) sink->send_control("control");
+        };
+        return value;
+    },Role::Viewer,4);
     std::thread server([&] { engine.run(); });
     auto cleanup = [&] { engine.stop(); server.join(); std::filesystem::remove(path); };
     try {
@@ -146,6 +159,30 @@ int main() {
         boost::system::error_code error; socket.read(buffer, error);
         require(error == boost::beast::websocket::error::closed, "revocation closes socket");
         require(socket.reason().code == boost::beast::websocket::close_code::policy_error, "auth close1008");
+        auto duplex = [&](bool binary,std::string message,std::uint16_t expected) {
+            boost::beast::websocket::stream<Protocol::socket> peer(ioc);
+            peer.next_layer().connect(Protocol::endpoint(path));
+            peer.set_option(boost::beast::websocket::stream_base::decorator([&](auto& req) {
+                req.set(http::field::cookie,login("viewer")); req.set(http::field::origin,"https://device:8443"); req.set("X-Forwarded-Proto","https");
+            }));
+            peer.handshake("device:8443","/duplex"); peer.binary(binary); peer.write(boost::asio::buffer(message));
+            if(!expected) {
+                for(const auto* item:{"ack-a","ack-b","new-a","new-b"}) {
+                    buffer.consume(buffer.size()); peer.read(buffer);
+                    require(boost::beast::buffers_to_string(buffer.data())==item,"keyed latest/control priority/discard");
+                }
+                peer.close(boost::beast::websocket::close_code::normal);
+            } else {
+                boost::system::error_code closed;
+                do {buffer.consume(buffer.size());peer.read(buffer,closed);} while(!closed);
+                require(closed==boost::beast::websocket::error::closed,"bounded input/queue closes");
+                require(peer.reason().code==expected,"bounded input/queue close code");
+            }
+        };
+        duplex(false,"burst",0);
+        duplex(true,"binary",1003);
+        duplex(false,std::string(4097,'x'),1009);
+        duplex(false,"overload",1013);
         // Stop with a live attachment: producer calls must be disabled before ioc destruction.
         const auto second_cookie = login("viewer");
         boost::beast::websocket::stream<Protocol::socket> second(ioc); second.next_layer().connect(Protocol::endpoint(path));
