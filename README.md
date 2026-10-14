@@ -229,3 +229,10 @@ are contained so they cannot change the operation response. Replace or clear the
 observer safely while running. Product applications choose event messages,
 privacy policy, persistence, and rate limits. Read-only provider management and
 invalid management bodies do not perform mutations or emit outcome events.
+
+## License
+
+Monutchee-owned code is available under **GPL-3.0-only or a separately agreed
+commercial license**, subject to existing third-party notices. See
+[LICENSE](LICENSE), [LICENSING.md](LICENSING.md), and
+[COMMERCIAL.md](COMMERCIAL.md).
