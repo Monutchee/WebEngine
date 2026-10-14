@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "AuthProvider.hpp"
+#include "AuthObserver.hpp"
 #include "Http.hpp"
 #include "Role.hpp"
 
@@ -108,6 +109,9 @@ public:
     // Registers POST /api/login, POST /api/logout and GET /auth-check, wired to
     // the AuthProvider and the internal session-token store.
     WebEngine& enable_auth_endpoints();
+
+    // Optional outcome observer; exceptions are contained. Safe to replace while running.
+    WebEngine& set_auth_observer(AuthObserver observer);
 
     // Registers the Admin-only management endpoints:
     //   /api/admin/acl   GET/POST/DELETE      — view/edit protected-path prefixes

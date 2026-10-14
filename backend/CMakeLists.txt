@@ -105,3 +105,13 @@ if(WEBENGINE_BUILD_TESTS)
     add_test(NAME webengine_streaming_download
              COMMAND webengine_streaming_download_test)
 endif()
+
+if(WEBENGINE_BUILD_TESTS)
+    add_executable(webengine_auth_observer_test tests/auth_observer_test.cpp)
+    target_link_libraries(webengine_auth_observer_test PRIVATE webengine::webengine)
+    target_compile_features(webengine_auth_observer_test PRIVATE cxx_std_23)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(webengine_auth_observer_test PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME webengine_auth_observer COMMAND webengine_auth_observer_test)
+endif()

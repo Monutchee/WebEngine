@@ -38,16 +38,31 @@ Response AuthHandler::handle_login(const Request& req)
     LoginReq body{};
     // Tolerate missing/garbage bodies: on a parse error the fields stay empty and
     // the credential check below fails with 401, as before.
-    (void) glz::read<glz::opts{.error_on_unknown_keys = false}>(body, req.body());
+    const bool malformed = static_cast<bool>(
+        glz::read<glz::opts{.error_on_unknown_keys = false}>(body, req.body()));
     const std::string username = body.username ? *body.username : std::string{};
     const std::string password = body.password ? *body.password : std::string{};
 
     std::optional<Role> role;
-    if (username.empty() || !(role = auth_.authenticate(username, password)))
+    try {
+        if (!malformed && !username.empty()) role = auth_.authenticate(username, password);
+    } catch (...) {
+        observation_.notify({AuthOperation::login, false, {}, {}});
+        throw;
+    }
+    if (!role) {
+        observation_.notify({AuthOperation::login, false, {}, {}});
         return json(http::status::unauthorized,
             glz::write_json(glz::obj{"error", "invalid credentials"}).value_or(std::string{}));
+    }
 
-    std::string token = tokens_.issue(username, *role);
+    std::string token;
+    try { token = tokens_.issue(username, *role); }
+    catch (...) {
+        observation_.notify({AuthOperation::login, false, {}, {}});
+        throw;
+    }
+    observation_.notify({AuthOperation::login, true, username, {}});
 
     auto res = json(http::status::ok, R"({"status":"ok"})");
     res.set(http::field::set_cookie,
@@ -57,6 +72,7 @@ Response AuthHandler::handle_login(const Request& req)
 
 Response AuthHandler::handle_logout(const Request& req)
 {
+    const auto entry = validated_token(req, tokens_);
     auto cookie_it = req.find(http::field::cookie);
     if (cookie_it != req.end()) {
         std::string token = extract_cookie(cookie_it->value(), "session");
@@ -64,6 +80,7 @@ Response AuthHandler::handle_logout(const Request& req)
             tokens_.revoke(token);
     }
 
+    if (entry) observation_.notify({AuthOperation::logout, true, entry->username, {}});
     auto res = json(http::status::ok, R"({"status":"ok"})");
     res.set(http::field::set_cookie,
             "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");

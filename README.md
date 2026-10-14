@@ -218,6 +218,18 @@ or
 alice / user123
 ```
 
+### Authentication outcome observer
+
+`set_auth_observer(AuthObserver)` optionally observes completed login, authenticated
+logout, and built-in account/ACL mutation outcomes. Events carry operation,
+success, authenticated actor, and subject identifiers only; failed logins expose
+no submitted identity. Passwords, cookies, tokens, and role values are excluded.
+Callbacks run on HTTP worker threads and must be thread-safe. Callback exceptions
+are contained so they cannot change the operation response. Replace or clear the
+observer safely while running. Product applications choose event messages,
+privacy policy, persistence, and rate limits. Read-only provider management and
+invalid management bodies do not perform mutations or emit outcome events.
+
 ## License
 
 Monutchee-owned code is available under **GPL-3.0-only or a separately agreed
