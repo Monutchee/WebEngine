@@ -1,4 +1,5 @@
 #include "Session.hpp"
+#include "WebSocketSession.hpp"
 
 #include <algorithm>
 #include <variant>
@@ -81,6 +82,9 @@ void Session::do_read_body()
                 response->keep_alive(keep_alive);
                 response->prepare_payload();
                 self->do_write(std::move(*response), keep_alive);
+            } else if (auto* upgrade = std::get_if<WebSocketUpgrade>(&result)) {
+                std::make_shared<WebSocketSession>(std::move(self->socket_), std::move(*upgrade))
+                    ->run(std::move(request));
             } else {
                 self->do_write(
                     std::get<StreamingDownload>(std::move(result)),

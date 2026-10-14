@@ -47,6 +47,8 @@ public:
     // Match, authorize and invoke. Never throws; always returns a transport
     // result (ordinary response or fixed-length streaming download).
     HandlerResult dispatch(const Request& req) const;
+    void stop_websockets();
+    void reset_websockets();
     std::optional<std::size_t> body_limit(
         http::verb method, std::string_view target) const;
 
@@ -70,6 +72,10 @@ private:
     std::vector<PrefixRoute>  prefix_routes_;   // fallback when no exact route matches
     mutable std::shared_mutex mutex_;
     TokenStore&               tokens_;
+    mutable std::mutex streams_mutex_;
+    mutable std::vector<std::weak_ptr<WebSocketSink>> streams_;
+    mutable bool streams_stopped_ = false;
+    mutable std::uint64_t stream_generation_ = 0;
 };
 
 } // namespace webengine
