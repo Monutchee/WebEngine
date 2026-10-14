@@ -66,8 +66,10 @@ HandlerResult Router::dispatch(const Request& req) const
     // the handler — handlers may call back into the engine (e.g. set_api_role).
     RouteHandler        handler;
     std::optional<Role> min_role;
+    CredentialPolicy credential_policy;
     {
         std::shared_lock lock(mutex_);
+        credential_policy = credential_policy_;
         auto it = routes_.find(Key{req.method(), path});
         if (it != routes_.end()) {
             handler  = it->second.handler;
@@ -89,16 +91,18 @@ HandlerResult Router::dispatch(const Request& req) const
 
     RequestContext ctx{req, std::nullopt};
 
-    // Enforce authentication/authorization for protected routes.
+    try {
+        if (auto entry = validated_token(req, tokens_)) ctx.user = UserInfo{entry->username, entry->role};
+        if (credential_policy) if (auto denial = credential_policy(ctx)) return *denial;
+    } catch (...) { return json(http::status::service_unavailable, R"({"error":"authentication unavailable"})"); }
     if (min_role) {
-        auto entry = validated_token(req, tokens_);
-        if (!entry)
-            return json(http::status::unauthorized,
-                glz::write_json(glz::obj{"error", "authentication required"}).value_or(std::string{}));
-        if (!role_satisfies(entry->role, *min_role))
-            return json(http::status::forbidden,
-                glz::write_json(glz::obj{"error", "insufficient permissions"}).value_or(std::string{}));
-        ctx.user = UserInfo{entry->username, entry->role};
+        if (!ctx.user) {
+            auto response = json(http::status::unauthorized, R"({"error":"authentication required"})");
+            response.set(http::field::www_authenticate, "Bearer realm=\"device\"");
+            return response;
+        }
+        if (!role_satisfies(ctx.user->role, *min_role))
+            return json(http::status::forbidden, R"({"error":"insufficient permissions"})");
     }
 
     // Handlers are arbitrary user code; a throw must not escape into io_context::run()
@@ -122,8 +126,8 @@ HandlerResult Router::dispatch(const Request& req) const
             };
             const auto token = extract_token(req);
             upgrade->authorized = [this, token, required = *min_role] {
-                const auto entry = tokens_.validate(token);
-                return entry && role_satisfies(entry->role, required);
+                try { const auto entry = tokens_.validate(token);
+                return entry && role_satisfies(entry->role, required); } catch (...) { return false; }
             };
         }
         return result;
@@ -131,6 +135,28 @@ HandlerResult Router::dispatch(const Request& req) const
         return json(http::status::internal_server_error,
             glz::write_json(glz::obj{"error", "internal server error"}).value_or(std::string{}));
     }
+}
+
+void Router::async_dispatch(Request request, std::function<void(Request, HandlerResult)> done) {
+    std::lock_guard admission(dispatch_mutex_);
+    if (work_stopped_ || pending_ >= 64) {
+        done(std::move(request), json(http::status::service_unavailable, R"({"error":"request queue full"})"));
+        return;
+    }
+    ++pending_;
+    boost::asio::post(workers_, [this, request = std::move(request), done = std::move(done)]() mutable {
+        auto result = dispatch(request);
+        --pending_;
+        done(std::move(request), std::move(result));
+    });
+}
+
+void Router::join_dispatch() {
+    {
+        std::lock_guard admission(dispatch_mutex_);
+        work_stopped_ = true;
+    }
+    workers_.join();
 }
 
 void Router::reset_websockets() {

@@ -1,5 +1,6 @@
 #pragma once
 #include <optional>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,8 @@ public:
 
     // Whether the optional user-management methods below are functional.
     // Gate runtime mutation on this; the admin endpoints do.
+    virtual std::uint64_t session_revision(const std::string&) const { return 0; }
+
     virtual bool supports_management() const { return false; }
 
     // Create or update a user. Returns true on success.
