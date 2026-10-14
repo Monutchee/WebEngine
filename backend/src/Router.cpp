@@ -105,11 +105,44 @@ HandlerResult Router::dispatch(const Request& req) const
     // (which would propagate out of a worker thread and call std::terminate). Contain
     // it and report 500 instead.
     try {
-        return handler(ctx);
+        auto result = handler(ctx);
+        if (auto* upgrade = std::get_if<WebSocketUpgrade>(&result)) {
+            if (!min_role) return text(http::status::forbidden, "WebSocket requires authentication");
+            std::uint64_t generation;
+            { std::lock_guard lock(streams_mutex_); generation = stream_generation_; }
+            auto attach = std::move(upgrade->attach);
+            upgrade->attach = [this, generation, attach = std::move(attach)](std::shared_ptr<WebSocketSink> sink) {
+                {
+                    std::lock_guard lock(streams_mutex_);
+                    if (streams_stopped_ || generation != stream_generation_) { sink->deactivate(); return std::shared_ptr<void>{}; }
+                    std::erase_if(streams_, [](const auto& weak) { return weak.expired(); });
+                    streams_.push_back(sink);
+                }
+                return attach(std::move(sink));
+            };
+            const auto token = extract_token(req);
+            upgrade->authorized = [this, token, required = *min_role] {
+                const auto entry = tokens_.validate(token);
+                return entry && role_satisfies(entry->role, required);
+            };
+        }
+        return result;
     } catch (...) {
         return json(http::status::internal_server_error,
             glz::write_json(glz::obj{"error", "internal server error"}).value_or(std::string{}));
     }
+}
+
+void Router::reset_websockets() {
+    std::lock_guard lock(streams_mutex_);
+    ++stream_generation_;
+    streams_stopped_ = false;
+}
+void Router::stop_websockets() {
+    std::lock_guard lock(streams_mutex_);
+    streams_stopped_ = true;
+    for (auto& weak : streams_) if (auto sink = weak.lock()) sink->deactivate();
+    streams_.clear();
 }
 
 } // namespace webengine

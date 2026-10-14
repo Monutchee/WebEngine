@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -69,7 +70,23 @@ using FileDownloadHandler = std::function<std::optional<FileDownload>(
 
 // Handler remains Response-only for source compatibility. Streaming handlers
 // may instead return an ordinary error/status response from request validation.
-using HandlerResult = std::variant<Response, StreamingDownload>;
+/** Latest-only server-push attachment. Calls are thread-safe and nonblocking. */
+class WebSocketSink {
+public:
+    virtual ~WebSocketSink() = default;
+    virtual void send_latest(std::string message) = 0;
+    virtual void send_if_idle(std::string message) = 0; // low-priority keepalive
+    virtual bool active() const = 0;
+    virtual void deactivate() = 0; // server shutdown; rejects further producer posts
+};
+struct WebSocketUpgrade {
+    // Called after handshake. Retain the returned RAII token for attachment lifetime.
+    std::function<std::shared_ptr<void>(std::shared_ptr<WebSocketSink>)> attach;
+    std::function<bool()> authorized; // installed by authenticated routing
+    std::shared_ptr<void> reservation; // route-level connection limit
+};
+using HandlerResult = std::variant<Response, StreamingDownload, WebSocketUpgrade>;
+using WebSocketHandler = std::function<std::variant<Response, WebSocketUpgrade>(const RequestContext&)>;
 using StreamingDownloadHandler = std::function<HandlerResult(
     const RequestContext&)>;
 

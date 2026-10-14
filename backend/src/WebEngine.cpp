@@ -1,6 +1,9 @@
 #include "webengine/WebEngine.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <boost/beast/websocket.hpp>
+#include "WebSocketOrigin.hpp"
 #include <cctype>
 #include <csignal>
 #include <memory>
@@ -95,6 +98,8 @@ struct WebEngine::Impl {
           router(tokens),
           auth_handler(*auth, tokens, acl, observation) {}
 
+    ~Impl() { router.stop_websockets(); ioc.stop(); }
+
     std::shared_ptr<AuthProvider> auth;
     TokenStore                    tokens;
     Acl                           acl;
@@ -123,7 +128,7 @@ static std::shared_ptr<AuthProvider> require_auth(std::shared_ptr<AuthProvider> 
 WebEngine::WebEngine(std::shared_ptr<AuthProvider> auth)
     : impl_(std::make_unique<Impl>(require_auth(std::move(auth)))) {}
 
-WebEngine::~WebEngine()                            = default;
+WebEngine::~WebEngine() { if (impl_) stop(); }
 WebEngine::WebEngine(WebEngine&&) noexcept         = default;
 WebEngine& WebEngine::operator=(WebEngine&&) noexcept = default;
 
@@ -139,6 +144,35 @@ WebEngine& WebEngine::add_api(http::verb method, std::string path, Handler handl
             -> HandlerResult {
             return handler(context);
         }, min_role);
+    return *this;
+}
+
+WebEngine& WebEngine::add_websocket(std::string path, WebSocketHandler handler,
+                                   Role min_role, std::size_t max_connections)
+{
+    if (!handler || max_connections == 0)
+        throw std::invalid_argument("WebSocket requires a handler and connection limit");
+    auto count = std::make_shared<std::atomic<std::size_t>>(0);
+    impl_->router.add_route(http::verb::get, std::move(path),
+        [handler = std::move(handler), count, max_connections](const RequestContext& context) -> HandlerResult {
+            const auto& request = context.request;
+            if (!boost::beast::websocket::is_upgrade(request))
+                return text(http::status::upgrade_required, "WebSocket upgrade required");
+            if (!websocket_same_origin(request) || request.target().find('?') != boost::beast::string_view::npos)
+                return text(http::status::forbidden, "Same-origin WebSocket required");
+            auto current = count->load();
+            do {
+                if (current >= max_connections)
+                    return text(http::status::service_unavailable, "WebSocket connection limit reached");
+            } while (!count->compare_exchange_weak(current, current + 1));
+            auto reservation = std::shared_ptr<void>(count.get(), [count](void*) { --*count; });
+            auto result = handler(context);
+            if (auto* response = std::get_if<Response>(&result)) return std::move(*response);
+            auto upgrade = std::get<WebSocketUpgrade>(std::move(result));
+            if (!upgrade.attach) return text(http::status::internal_server_error, "Invalid WebSocket handler");
+            upgrade.reservation = std::move(reservation);
+            return upgrade;
+        }, min_role, 1024);
     return *this;
 }
 
@@ -415,7 +449,7 @@ WebEngine& WebEngine::enable_signal_shutdown()
     // The completion runs as an ordinary handler inside run() — no cross-context
     // call into stop() from signal-handler context.
     impl.signals->async_wait([&impl](const boost::system::error_code& ec, int) {
-        if (!ec) impl.ioc.stop();
+        if (!ec) { impl.router.stop_websockets(); impl.ioc.stop(); }
     });
     return *this;
 }
@@ -428,6 +462,7 @@ void WebEngine::run()
 
     // Clear any latched "stopped" flag from a prior run()/stop() so the loop
     // actually serves (io_context::run() returns immediately while stopped).
+    impl.router.reset_websockets();
     impl.ioc.restart();
 
     // Remove any stale socket so bind() never sees EADDRINUSE.
@@ -457,10 +492,12 @@ void WebEngine::run()
         threads.emplace_back(serve);
     serve();
     for (auto& t : threads) t.join();
+    impl.router.stop_websockets();
 }
 
 void WebEngine::stop()
 {
+    impl_->router.stop_websockets();
     impl_->ioc.stop();
 }
 

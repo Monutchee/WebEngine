@@ -52,6 +52,7 @@ add_library(webengine STATIC
     src/Router.cpp
     src/AuthHandler.cpp
     src/Session.cpp
+    src/WebSocketSession.cpp
     src/Listener.cpp
     src/ProcessUtil.cpp
     src/NginxController.cpp
@@ -114,4 +115,14 @@ if(WEBENGINE_BUILD_TESTS)
         target_compile_options(webengine_auth_observer_test PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME webengine_auth_observer COMMAND webengine_auth_observer_test)
+endif()
+
+if(BUILD_TESTING AND WEBENGINE_BUILD_TESTS)
+    add_executable(webengine_websocket_test tests/websocket_test.cpp)
+    target_include_directories(webengine_websocket_test PRIVATE src)
+    target_link_libraries(webengine_websocket_test PRIVATE webengine::webengine)
+    target_compile_features(webengine_websocket_test PRIVATE cxx_std_23)
+    target_compile_options(webengine_websocket_test PRIVATE -Wall -Wextra -Wpedantic -UNDEBUG)
+    add_test(NAME webengine_websocket COMMAND webengine_websocket_test)
+    set_tests_properties(webengine_websocket PROPERTIES TIMEOUT 20 LABELS security-compat)
 endif()
