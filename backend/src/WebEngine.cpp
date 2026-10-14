@@ -42,6 +42,21 @@ struct AddUserReq  { std::optional<std::string> username; std::optional<std::str
 struct UsernameReq { std::optional<std::string> username; };
 struct SetRoleReq  { std::optional<std::string> username; std::optional<std::string> role; };
 
+template<class Mutation>
+bool observe_mutation(AuthObservation& observation, AuthOperation operation,
+                      const RequestContext& ctx, const std::string& subject,
+                      Mutation mutation)
+{
+    bool succeeded;
+    try { succeeded = mutation(); }
+    catch (...) {
+        observation.notify({operation, false, ctx.user->username, subject});
+        throw;
+    }
+    observation.notify({operation, succeeded, ctx.user->username, subject});
+    return succeeded;
+}
+
 bool safe_file_name(std::string_view name)
 {
     return !name.empty() && name != "." && name != ".." &&
@@ -78,12 +93,13 @@ struct WebEngine::Impl {
     explicit Impl(std::shared_ptr<AuthProvider> a)
         : auth(std::move(a)),
           router(tokens),
-          auth_handler(*auth, tokens, acl) {}
+          auth_handler(*auth, tokens, acl, observation) {}
 
     std::shared_ptr<AuthProvider> auth;
     TokenStore                    tokens;
     Acl                           acl;
     Router                        router;
+    AuthObservation               observation;
     AuthHandler                   auth_handler;
 
     std::string                   socket_path = "/tmp/backend.sock";
@@ -274,17 +290,24 @@ WebEngine& WebEngine::enable_auth_endpoints()
     return *this;
 }
 
+WebEngine& WebEngine::set_auth_observer(AuthObserver observer)
+{
+    impl_->observation.set(std::move(observer));
+    return *this;
+}
+
 WebEngine& WebEngine::enable_admin_endpoints()
 {
     Acl*          acl  = &impl_->acl;
     AuthProvider* auth = impl_->auth.get();
+    AuthObservation* observation = &impl_->observation;
 
     // ── ACL management: GET/POST/DELETE /api/admin/acl ──────────────────────────
     add_api(http::verb::get, "/api/admin/acl", [acl](const RequestContext&) {
         return json(http::status::ok, glz::write_json(to_view(acl->list())).value_or(std::string{}));
     }, Role::Admin);
 
-    add_api(http::verb::post, "/api/admin/acl", [acl](const RequestContext& ctx) {
+    add_api(http::verb::post, "/api/admin/acl", [acl, observation](const RequestContext& ctx) {
         AclSetReq req{};
         Role min_role;
         if (glz::read<glz::opts{.error_on_unknown_keys = false}>(req, ctx.request.body())
@@ -293,16 +316,18 @@ WebEngine& WebEngine::enable_admin_endpoints()
             return json(http::status::bad_request, glz::write_json(glz::obj{"error",
                 "required: prefix (string), role (admin|user|viewer|guest)"}).value_or(std::string{}));
         acl->set(*req.prefix, min_role);
+        observation->notify({AuthOperation::acl_saved, true, ctx.user->username, *req.prefix});
         return json(http::status::ok, R"({"status":"ok"})");
     }, Role::Admin);
 
-    add_api(http::verb::delete_, "/api/admin/acl", [acl](const RequestContext& ctx) {
+    add_api(http::verb::delete_, "/api/admin/acl", [acl, observation](const RequestContext& ctx) {
         PrefixReq req{};
         if (glz::read<glz::opts{.error_on_unknown_keys = false}>(req, ctx.request.body())
                  || !req.prefix || req.prefix->empty())
             return json(http::status::bad_request,
                 glz::write_json(glz::obj{"error", "required: prefix (string)"}).value_or(std::string{}));
         acl->remove(*req.prefix);
+        observation->notify({AuthOperation::acl_removed, true, ctx.user->username, *req.prefix});
         return json(http::status::ok, R"({"status":"ok"})");
     }, Role::Admin);
 
@@ -311,7 +336,7 @@ WebEngine& WebEngine::enable_admin_endpoints()
         return json(http::status::ok, glz::write_json(to_view(auth->list_users())).value_or(std::string{}));
     }, Role::Admin);
 
-    add_api(http::verb::post, "/api/admin/users", [auth](const RequestContext& ctx) {
+    add_api(http::verb::post, "/api/admin/users", [auth, observation](const RequestContext& ctx) {
         if (!auth->supports_management())
             return json(http::status::not_implemented,
                 glz::write_json(glz::obj{"error", "auth provider is read-only"}).value_or(std::string{}));
@@ -323,11 +348,14 @@ WebEngine& WebEngine::enable_admin_endpoints()
                  || !req.role || !role_from_string(*req.role, role))
             return json(http::status::bad_request, glz::write_json(glz::obj{"error",
                 "required: username, password, role (admin|user|viewer|guest)"}).value_or(std::string{}));
-        auth->add_user(*req.username, *req.password, role);
+        const bool saved = observe_mutation(*observation, AuthOperation::user_saved, ctx, *req.username,
+            [&] { return auth->add_user(*req.username, *req.password, role); });
+        if (!saved)
+            return json(http::status::internal_server_error, R"({"error":"user update failed"})");
         return json(http::status::ok, R"({"status":"ok"})");
     }, Role::Admin);
 
-    add_api(http::verb::delete_, "/api/admin/users", [auth](const RequestContext& ctx) {
+    add_api(http::verb::delete_, "/api/admin/users", [auth, observation](const RequestContext& ctx) {
         if (!auth->supports_management())
             return json(http::status::not_implemented,
                 glz::write_json(glz::obj{"error", "auth provider is read-only"}).value_or(std::string{}));
@@ -336,13 +364,15 @@ WebEngine& WebEngine::enable_admin_endpoints()
                  || !req.username || req.username->empty())
             return json(http::status::bad_request,
                 glz::write_json(glz::obj{"error", "required: username (string)"}).value_or(std::string{}));
-        if (!auth->remove_user(*req.username))
+        const bool removed = observe_mutation(*observation, AuthOperation::user_removed, ctx, *req.username,
+            [&] { return auth->remove_user(*req.username); });
+        if (!removed)
             return json(http::status::not_found,
                 glz::write_json(glz::obj{"error", "user not found"}).value_or(std::string{}));
         return json(http::status::ok, R"({"status":"ok"})");
     }, Role::Admin);
 
-    add_api(http::verb::patch, "/api/admin/users", [auth](const RequestContext& ctx) {
+    add_api(http::verb::patch, "/api/admin/users", [auth, observation](const RequestContext& ctx) {
         if (!auth->supports_management())
             return json(http::status::not_implemented,
                 glz::write_json(glz::obj{"error", "auth provider is read-only"}).value_or(std::string{}));
@@ -353,7 +383,9 @@ WebEngine& WebEngine::enable_admin_endpoints()
                  || !req.role || !role_from_string(*req.role, role))
             return json(http::status::bad_request, glz::write_json(glz::obj{"error",
                 "required: username, role (admin|user|viewer|guest)"}).value_or(std::string{}));
-        if (!auth->set_user_role(*req.username, role))
+        const bool changed = observe_mutation(*observation, AuthOperation::role_changed, ctx, *req.username,
+            [&] { return auth->set_user_role(*req.username, role); });
+        if (!changed)
             return json(http::status::not_found,
                 glz::write_json(glz::obj{"error", "user not found"}).value_or(std::string{}));
         return json(http::status::ok, R"({"status":"ok"})");
