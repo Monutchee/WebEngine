@@ -8,6 +8,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 
 #include "AuthProvider.hpp"      // UserInfo
@@ -75,6 +76,11 @@ class WebSocketSink {
 public:
     virtual ~WebSocketSink() = default;
     virtual void send_latest(std::string message) = 0;
+    // Keyed latest snapshots and reliable control replies; implementations bound both.
+    virtual void send_keyed(std::string key, std::string message) { (void)key; send_latest(std::move(message)); }
+    virtual void discard_key(std::string_view key) { (void)key; }
+    virtual void send_control(std::string message) { send_latest(std::move(message)); }
+    virtual void terminate(std::uint16_t code) { (void)code; deactivate(); }
     virtual void send_if_idle(std::string message) = 0; // low-priority keepalive
     virtual bool active() const = 0;
     virtual void deactivate() = 0; // server shutdown; rejects further producer posts
@@ -82,6 +88,8 @@ public:
 struct WebSocketUpgrade {
     // Called after handshake. Retain the returned RAII token for attachment lifetime.
     std::function<std::shared_ptr<void>(std::shared_ptr<WebSocketSink>)> attach;
+    // Called on the transport strand; must validate/enqueue without blocking.
+    std::function<void(std::shared_ptr<WebSocketSink>, std::string)> receive;
     std::function<bool()> authorized; // installed by authenticated routing
     std::shared_ptr<void> reservation; // route-level connection limit
 };
