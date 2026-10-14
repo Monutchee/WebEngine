@@ -58,8 +58,29 @@ void established_expiry() {
     server.join(); std::filesystem::remove(path);
 }
 
+void dispatch_shutdown() {
+    TokenStore tokens;
+    auto router = std::make_unique<Router>(tokens);
+    std::atomic<bool> entered{false}, release{false}, completed{false}, destroyed{false};
+    router->add_route(http::verb::get, "/slow", [&](const auto&) -> HandlerResult {
+        entered = true;
+        while (!release) std::this_thread::sleep_for(1ms);
+        return json(http::status::ok, "{}");
+    }, std::nullopt);
+    router->async_dispatch(Request{http::verb::get,"/slow",11}, [&](auto,auto) { completed = true; });
+    for(int i=0;i<200&&!entered;++i) std::this_thread::sleep_for(1ms);
+    require(entered,"dispatch starts");
+    std::thread destroy([&] { router.reset(); destroyed = true; });
+    std::this_thread::sleep_for(20ms);
+    require(!destroyed,"router waits for in-flight handler");
+    release = true;
+    destroy.join();
+    require(completed && destroyed,"handler completes before routing state destruction");
+}
+
 }
 int main() {
+    dispatch_shutdown();
     Request origin{http::verb::get, "/stream", 11};
     origin.set(http::field::host, "device:8443"); origin.set("X-Forwarded-Proto", "https");
     origin.set(http::field::origin, "https://device:8443");

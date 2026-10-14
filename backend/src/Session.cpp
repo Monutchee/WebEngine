@@ -76,8 +76,10 @@ void Session::do_read_body()
             }
             if (ec) return;
             auto request = self->parser_->release();
-            bool keep_alive = request.keep_alive();
-            auto result = self->router_.dispatch(request);
+            self->router_.async_dispatch(std::move(request), [self](Request request, HandlerResult result) mutable {
+                asio::post(self->socket_.get_executor(), [self, request = std::move(request), result = std::move(result)]() mutable {
+                bool keep_alive = request.keep_alive();
+
             if (auto* response = std::get_if<Response>(&result)) {
                 response->keep_alive(keep_alive);
                 response->prepare_payload();
@@ -90,6 +92,8 @@ void Session::do_read_body()
                     std::get<StreamingDownload>(std::move(result)),
                     request.version(), keep_alive);
             }
+                });
+            });
         });
 }
 

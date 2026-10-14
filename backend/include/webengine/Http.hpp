@@ -30,6 +30,10 @@ struct RequestContext {
                                      // route declared a minimum role
 };
 
+// Product credential policy runs for every matched request, before role checks.
+// It may set a principal or reject; empty response continues normal routing.
+using CredentialPolicy = std::function<std::optional<Response>(RequestContext&)>;
+
 // A request handler: maps a context to a response. Register one with
 // WebEngine::add_api().
 using Handler = std::function<Response(const RequestContext&)>;

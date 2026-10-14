@@ -34,6 +34,7 @@ namespace webengine {
 // both before run() and from within handlers while the engine is serving.
 class WebEngine {
 public:
+    WebEngine& set_credential_policy(CredentialPolicy policy);
     explicit WebEngine(std::shared_ptr<AuthProvider> auth);
     ~WebEngine();
 
@@ -52,7 +53,9 @@ public:
     //                               RequestContext. Unauthenticated callers get
     //                               401, under-privileged callers get 403.
     WebEngine& add_api(http::verb method, std::string path, Handler handler,
-                       std::optional<Role> min_role = std::nullopt);
+                       std::optional<Role> min_role = std::nullopt, std::optional<std::size_t> max_body_bytes = std::nullopt);
+
+    WebEngine& add_prefix_api(http::verb method, std::string prefix, Handler handler, std::optional<Role> min_role = std::nullopt);
 
     // Same-origin server push. Requires a valid session throughout its lifetime.
     // Product callbacks must not block transport threads; use a worker for sampling.

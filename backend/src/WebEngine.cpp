@@ -96,9 +96,11 @@ struct WebEngine::Impl {
     explicit Impl(std::shared_ptr<AuthProvider> a)
         : auth(std::move(a)),
           router(tokens),
-          auth_handler(*auth, tokens, acl, observation) {}
+          auth_handler(*auth, tokens, acl, observation) {
+        tokens.set_revision_validator([this](const std::string& username) { return auth->session_revision(username); });
+    }
 
-    ~Impl() { router.stop_websockets(); ioc.stop(); }
+    ~Impl() { router.stop_websockets(); router.join_dispatch(); ioc.stop(); }
 
     std::shared_ptr<AuthProvider> auth;
     TokenStore                    tokens;
@@ -125,6 +127,8 @@ static std::shared_ptr<AuthProvider> require_auth(std::shared_ptr<AuthProvider> 
     return auth;
 }
 
+WebEngine& WebEngine::set_credential_policy(CredentialPolicy policy) { impl_->router.set_credential_policy(std::move(policy)); return *this; }
+
 WebEngine::WebEngine(std::shared_ptr<AuthProvider> auth)
     : impl_(std::make_unique<Impl>(require_auth(std::move(auth)))) {}
 
@@ -135,7 +139,7 @@ WebEngine& WebEngine::operator=(WebEngine&&) noexcept = default;
 // ── API registration ────────────────────────────────────────────────────────────
 
 WebEngine& WebEngine::add_api(http::verb method, std::string path, Handler handler,
-                              std::optional<Role> min_role)
+                              std::optional<Role> min_role, std::optional<std::size_t> max_body_bytes)
 {
     if (!handler)
         throw std::invalid_argument("API route requires a handler");
@@ -143,7 +147,12 @@ WebEngine& WebEngine::add_api(http::verb method, std::string path, Handler handl
         [handler = std::move(handler)](const RequestContext& context)
             -> HandlerResult {
             return handler(context);
-        }, min_role);
+        }, min_role, max_body_bytes);
+    return *this;
+}
+
+WebEngine& WebEngine::add_prefix_api(http::verb method, std::string prefix, Handler handler, std::optional<Role> min_role) {
+    impl_->router.add_prefix_route(method, std::move(prefix), [handler = std::move(handler)](const RequestContext& ctx) -> HandlerResult { return handler(ctx); }, min_role);
     return *this;
 }
 
@@ -313,10 +322,10 @@ WebEngine& WebEngine::enable_auth_endpoints()
 
     add_api(http::verb::post, "/api/login", [h](const RequestContext& ctx) {
         return h->handle_login(ctx.request);
-    });
+    }, std::nullopt, 4096);
     add_api(http::verb::post, "/api/logout", [h](const RequestContext& ctx) {
         return h->handle_logout(ctx.request);
-    });
+    }, std::nullopt, 4096);
     // Called internally by nginx auth_request for /protected/* access.
     add_api(http::verb::get, "/auth-check", [h](const RequestContext& ctx) {
         return h->handle_check(ctx.request);
