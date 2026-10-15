@@ -1,5 +1,8 @@
 #pragma once
 #include <map>
+#include <boost/asio/thread_pool.hpp>
+#include <boost/asio/post.hpp>
+#include <atomic>
 #include <optional>
 #include <shared_mutex>
 #include <string>
@@ -25,6 +28,12 @@ public:
     using RouteHandler = std::function<HandlerResult(const RequestContext&)>;
 
     explicit Router(TokenStore& tokens) : tokens_(tokens) {}
+    ~Router() { stop_websockets(); join_dispatch(); }
+
+    void set_credential_policy(CredentialPolicy policy) { std::unique_lock lock(mutex_); credential_policy_ = std::move(policy); }
+
+    void async_dispatch(Request request, std::function<void(Request, HandlerResult)> done);
+    void join_dispatch();
 
     // Register/replace a handler for (method, path).
     void add_route(http::verb method, std::string path, RouteHandler handler,
@@ -47,6 +56,8 @@ public:
     // Match, authorize and invoke. Never throws; always returns a transport
     // result (ordinary response or fixed-length streaming download).
     HandlerResult dispatch(const Request& req) const;
+    void stop_websockets();
+    void reset_websockets();
     std::optional<std::size_t> body_limit(
         http::verb method, std::string_view target) const;
 
@@ -70,6 +81,15 @@ private:
     std::vector<PrefixRoute>  prefix_routes_;   // fallback when no exact route matches
     mutable std::shared_mutex mutex_;
     TokenStore&               tokens_;
+    CredentialPolicy credential_policy_;
+    std::mutex dispatch_mutex_;
+    boost::asio::thread_pool workers_{2};
+    std::atomic<unsigned> pending_{0};
+    std::atomic<bool> work_stopped_{false};
+    mutable std::mutex streams_mutex_;
+    mutable std::vector<std::weak_ptr<WebSocketSink>> streams_;
+    mutable bool streams_stopped_ = false;
+    mutable std::uint64_t stream_generation_ = 0;
 };
 
 } // namespace webengine

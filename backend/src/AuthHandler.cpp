@@ -43,21 +43,27 @@ Response AuthHandler::handle_login(const Request& req)
     const std::string username = body.username ? *body.username : std::string{};
     const std::string password = body.password ? *body.password : std::string{};
 
+    std::uint64_t revision = 0;
     std::optional<Role> role;
     try {
+        revision = auth_.session_revision(username);
         if (!malformed && !username.empty()) role = auth_.authenticate(username, password);
+        if (auth_.session_revision(username) != revision) role.reset();
     } catch (...) {
         observation_.notify({AuthOperation::login, false, {}, {}});
         throw;
     }
     if (!role) {
         observation_.notify({AuthOperation::login, false, {}, {}});
-        return json(http::status::unauthorized,
+        auto rejected = json(http::status::unauthorized,
             glz::write_json(glz::obj{"error", "invalid credentials"}).value_or(std::string{}));
+        rejected.set(http::field::cache_control, "no-store");
+        rejected.set(http::field::www_authenticate, "Bearer realm=\"device\"");
+        return rejected;
     }
 
     std::string token;
-    try { token = tokens_.issue(username, *role); }
+    try { token = tokens_.issue(username, *role, std::chrono::hours(8), revision); }
     catch (...) {
         observation_.notify({AuthOperation::login, false, {}, {}});
         throw;
@@ -65,25 +71,22 @@ Response AuthHandler::handle_login(const Request& req)
     observation_.notify({AuthOperation::login, true, username, {}});
 
     auto res = json(http::status::ok, R"({"status":"ok"})");
+    res.set(http::field::cache_control, "no-store");
     res.set(http::field::set_cookie,
-            "session=" + token + "; HttpOnly; SameSite=Strict; Path=/");
+            "session=" + token + "; HttpOnly; SameSite=Strict; Path=/" + (req["X-Forwarded-Proto"] == "https" ? "; Secure" : ""));
     return res;
 }
 
 Response AuthHandler::handle_logout(const Request& req)
 {
     const auto entry = validated_token(req, tokens_);
-    auto cookie_it = req.find(http::field::cookie);
-    if (cookie_it != req.end()) {
-        std::string token = extract_cookie(cookie_it->value(), "session");
-        if (!token.empty())
-            tokens_.revoke(token);
-    }
+    tokens_.revoke(extract_token(req));
 
     if (entry) observation_.notify({AuthOperation::logout, true, entry->username, {}});
     auto res = json(http::status::ok, R"({"status":"ok"})");
+    res.set(http::field::cache_control, "no-store");
     res.set(http::field::set_cookie,
-            "session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+            std::string("session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0") + (req["X-Forwarded-Proto"] == "https" ? "; Secure" : ""));
     return res;
 }
 

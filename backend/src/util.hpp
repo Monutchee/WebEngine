@@ -19,36 +19,31 @@ namespace beast = boost::beast;
 inline std::string extract_cookie(beast::string_view cookie_header,
                                    beast::string_view name)
 {
-    std::string search = std::string(name.data(), name.size()) + "=";
-    auto pos = cookie_header.find(search);
-    if (pos == beast::string_view::npos) return {};
-    pos += search.size();
-    auto end = cookie_header.find(';', pos);
-    beast::string_view val = (end == beast::string_view::npos)
-        ? cookie_header.substr(pos)
-        : cookie_header.substr(pos, end - pos);
-    while (!val.empty() && val.front() == ' ') val.remove_prefix(1);
-    while (!val.empty() && val.back()  == ' ') val.remove_suffix(1);
-    return std::string(val.data(), val.size());
-}
-
-// Pulls the session token from a request: a "session" cookie first, then an
-// "Authorization: Bearer <token>" header. Returns "" if neither is present.
-inline std::string extract_token(const Request& req) {
-    auto cookie_it = req.find(http::field::cookie);
-    if (cookie_it != req.end()) {
-        std::string token = extract_cookie(cookie_it->value(), "session");
-        if (!token.empty()) return token;
-    }
-
-    auto auth_it = req.find(http::field::authorization);
-    if (auth_it != req.end()) {
-        auto hv = auth_it->value(); // beast::string_view
-        // beast::string_view has no starts_with() in Boost 1.74; use substr compare.
-        if (hv.size() >= 7 && hv.substr(0, 7) == "Bearer ")
-            return std::string(hv.data() + 7, hv.size() - 7);
+    while (!cookie_header.empty()) {
+        auto end = cookie_header.find(';');
+        auto item = cookie_header.substr(0, end);
+        while (!item.empty() && item.front() == ' ') item.remove_prefix(1);
+        auto eq = item.find('=');
+        if (eq != beast::string_view::npos && item.substr(0, eq) == name)
+            return std::string(item.data() + eq + 1, item.size() - eq - 1);
+        if (end == beast::string_view::npos) break;
+        cookie_header.remove_prefix(end + 1);
     }
     return {};
+}
+
+// An explicit Authorization header takes precedence over the session cookie.
+// Invalid Authorization never falls back to cookie credentials.
+inline std::string extract_token(const Request& req) {
+    auto auth = req.find(http::field::authorization);
+    if (auth != req.end()) {
+        auto value = auth->value();
+        if (value.size() > 7 && boost::beast::iequals(value.substr(0, 7), "Bearer "))
+            return std::string(value.data() + 7, value.size() - 7);
+        return {}; // Explicit Authorization never falls back to a cookie.
+    }
+    auto cookie = req.find(http::field::cookie);
+    return cookie == req.end() ? std::string{} : extract_cookie(cookie->value(), "session");
 }
 
 // Resolves and validates the session token on a request to its store entry.

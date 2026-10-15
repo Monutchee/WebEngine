@@ -50,6 +50,7 @@ bool NginxController::ensure_dirs()
 bool NginxController::write_listen_snippet()
 {
     std::string content = "listen " + std::to_string(opts_.http_port) + ";\n";
+    content += "set $https_redirect_port " + std::to_string(opts_.https_port) + ";\n";
     if (opts_.https_enabled)
         content += "listen " + std::to_string(opts_.https_port) + " ssl;\n";
 
