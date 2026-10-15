@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <functional>
 #include <iomanip>
 #include <optional>
 #include <shared_mutex>
@@ -18,6 +19,7 @@ namespace webengine {
 struct TokenEntry {
     std::string                           username;
     Role                                  role;
+    std::uint64_t revision = 0;
     std::chrono::steady_clock::time_point expires_at;
 };
 
@@ -26,7 +28,7 @@ struct TokenEntry {
 class TokenStore {
 public:
     std::string issue(const std::string& username, Role role,
-                      std::chrono::seconds ttl = std::chrono::hours(8))
+                      std::chrono::seconds ttl = std::chrono::hours(8), std::uint64_t revision = 0)
     {
         unsigned char buf[32];
         // Never mint a token from uninitialised memory: RAND_bytes returns 1 only
@@ -40,7 +42,7 @@ public:
         std::string token = oss.str();
 
         std::unique_lock lock(mutex_);
-        store_[token] = {username, role, std::chrono::steady_clock::now() + ttl};
+        store_[token] = {username, role, revision, std::chrono::steady_clock::now() + ttl};
         return token;
     }
 
@@ -48,6 +50,7 @@ public:
         std::shared_lock lock(mutex_);
         auto it = store_.find(token);
         if (it == store_.end()) return std::nullopt;
+        if (revision_ && revision_(it->second.username) != it->second.revision) return std::nullopt;
         if (it->second.expires_at < std::chrono::steady_clock::now())
             return std::nullopt;
         return it->second;
@@ -58,7 +61,10 @@ public:
         store_.erase(token);
     }
 
+    void set_revision_validator(std::function<std::uint64_t(const std::string&)> f) { revision_ = std::move(f); }
+
 private:
+    std::function<std::uint64_t(const std::string&)> revision_;
     std::unordered_map<std::string, TokenEntry> store_;
     mutable std::shared_mutex                   mutex_;
 };

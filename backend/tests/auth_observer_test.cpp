@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <thread>
 #include <mutex>
+#include <atomic>
 #include <vector>
 #include <unistd.h>
 #include "webengine/WebEngine.hpp"
@@ -15,7 +16,11 @@ namespace {
 using namespace webengine;
 class Provider final : public AuthProvider {
 public:
+    std::atomic<bool> blocked{false}, entered{false};
+    std::atomic<std::uint64_t> revision{1};
+    std::uint64_t session_revision(const std::string&) const override { return revision.load(); }
     std::optional<Role> authenticate(const std::string& name, const std::string& password) override {
+        if (blocked) { entered = true; while (blocked) std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
         if (password != "secret") return {};
         if (name == "admin") return Role::Admin;
         if (name == "guest") return Role::Guest;
@@ -34,7 +39,8 @@ void require(bool condition) { if (!condition) throw std::runtime_error("auth ob
 int main() {
     using Socket = boost::asio::local::stream_protocol;
     const std::string path = "/tmp/webengine-auth-" + std::to_string(::getpid()) + ".sock";
-    WebEngine engine(std::make_shared<Provider>());
+    auto provider = std::make_shared<Provider>();
+    WebEngine engine(provider);
     std::vector<AuthEvent> events;
     std::mutex event_mutex;
     auto last = [&] { std::lock_guard lock(event_mutex); return events.back(); };
@@ -86,6 +92,19 @@ int main() {
         require(request(http::verb::get, "/events", {}, guest).result() == http::status::unauthorized);
         engine.set_auth_observer({});
         count = count_events(); login("admin"); require(count_events() == count);
+        provider->blocked = true;
+        provider->entered = false;
+        Response raced;
+        std::thread slow_login([&] { raced = request(http::verb::post, "/api/login", "{\"username\":\"admin\",\"password\":\"secret\"}"); });
+        for (int i=0; i<200 && !provider->entered; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        require(provider->entered);
+        // A slow credential operation cannot monopolize the single transport thread.
+        require(request(http::verb::get, "/events").result() == http::status::unauthorized);
+        ++provider->revision;
+        provider->blocked = false;
+        slow_login.join();
+        require(raced.result() == http::status::unauthorized);
+        require(request(http::verb::get, "/events", {}, admin).result() == http::status::unauthorized);
         cleanup(); if (server_error) std::rethrow_exception(server_error);
     } catch (...) { cleanup(); throw; }
 }

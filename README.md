@@ -230,6 +230,39 @@ observer safely while running. Product applications choose event messages,
 privacy policy, persistence, and rate limits. Read-only provider management and
 invalid management bodies do not perform mutations or emit outcome events.
 
+### Authenticated WebSockets
+
+`add_websocket(path, factory, minimum_role, maximum_connections)` registers an
+ordinary authenticated GET route that may upgrade on the existing Unix listener.
+The reverse proxy must overwrite `Host` with the external authority including
+its port and `X-Forwarded-Proto` with the external HTTP scheme. The listener must
+remain accessible only to trusted local peers. Upgrades require an exactly
+matching Origin (default ports normalize), an existing session cookie, and no
+query string. Logout and token expiry close established connections with 1008
+within one second. Existing token role semantics apply.
+
+Factories return a response or a `WebSocketUpgrade` attachment callback. Keep
+attachment callbacks nonblocking; perform application sampling on owned workers.
+Retain the sink weakly. `send_latest` replaces the pending message while keeping
+one active write; `send_if_idle` is a lower-priority keepalive that cannot replace
+pending state. `send_keyed` retains latest state independently for up to 32
+application keys and dispatches keys fairly; `discard_key` drops pending state
+when a subscription ends. `send_control` has a reliable FIFO of up to 64 frames,
+with priority over data. Aggregate pending bytes are capped at 2 MiB; overload
+closes with 1013. Frames are capped at 256 KiB (1009). An optional `receive`
+callback accepts text messages up to 4 KiB; keep validation/enqueue bounded and
+perform source work off the transport thread. Without a receive callback,
+application input is unsupported (1003), with a 1 KiB input limit. Binary input
+is unsupported. Transport remains product-neutral; it owns no subscription
+schema or source scheduler. Callbacks may own an RAII attachment
+through their return value. Stop, signals and destruction deactivate producers
+before stopping the executor; sequential run/stop/run remains supported.
+
+Build with `WEBENGINE_BUILD_TESTS=ON` and run CTest `webengine_websocket` for real
+Unix-socket upgrade, authentication, origin, revocation and queue tests.
+
+Credential providers may return a cached session revision; changing it invalidates existing sessions, including live WebSockets. Product credential policy runs before route authorization and may admit scoped integration credentials or reject restricted sessions. Explicit Authorization takes precedence over cookies. HTTP handlers run in a bounded two-worker dispatch pool (64 outstanding requests), keeping password hashing off transport threads. Providers and handlers must support concurrent calls. Destruction joins dispatch workers before destroying routing/transport state; stop/run restart retains the pool. Forwarded scheme is trusted only on the Unix listener; HTTPS responses issue Secure session cookies.
+
 ## License
 
 Monutchee-owned code is available under **GPL-3.0-only or a separately agreed
