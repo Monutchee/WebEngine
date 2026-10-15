@@ -262,3 +262,10 @@ Build with `WEBENGINE_BUILD_TESTS=ON` and run CTest `webengine_websocket` for re
 Unix-socket upgrade, authentication, origin, revocation and queue tests.
 
 Credential providers may return a cached session revision; changing it invalidates existing sessions, including live WebSockets. Product credential policy runs before route authorization and may admit scoped integration credentials or reject restricted sessions. Explicit Authorization takes precedence over cookies. HTTP handlers run in a bounded two-worker dispatch pool (64 outstanding requests), keeping password hashing off transport threads. Providers and handlers must support concurrent calls. Destruction joins dispatch workers before destroying routing/transport state; stop/run restart retains the pool. Forwarded scheme is trusted only on the Unix listener; HTTPS responses issue Secure session cookies.
+
+## License
+
+Monutchee-owned code is available under **GPL-3.0-only or a separately agreed
+commercial license**, subject to existing third-party notices. See
+[LICENSE](LICENSE), [LICENSING.md](LICENSING.md), and
+[COMMERCIAL.md](COMMERCIAL.md).
