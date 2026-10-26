@@ -94,6 +94,12 @@ if(WEBENGINE_BUILD_EXAMPLE)
 endif()
 
 if(WEBENGINE_BUILD_TESTS)
+    add_executable(webengine_token_store_test tests/token_store_test.cpp)
+    target_include_directories(webengine_token_store_test PRIVATE src)
+    target_link_libraries(webengine_token_store_test PRIVATE webengine::webengine)
+    target_compile_options(webengine_token_store_test PRIVATE -UNDEBUG)
+    add_test(NAME webengine_token_store COMMAND webengine_token_store_test)
+
     add_executable(webengine_streaming_download_test
         tests/streaming_download_test.cpp)
     target_link_libraries(webengine_streaming_download_test

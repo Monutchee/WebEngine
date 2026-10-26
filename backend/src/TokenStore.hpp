@@ -42,7 +42,9 @@ public:
         std::string token = oss.str();
 
         std::unique_lock lock(mutex_);
-        store_[token] = {username, role, revision, std::chrono::steady_clock::now() + ttl};
+        const auto now = std::chrono::steady_clock::now();
+        std::erase_if(store_, [now](const auto& item) { return item.second.expires_at <= now; });
+        store_[token] = {username, role, revision, now + ttl};
         return token;
     }
 
@@ -51,7 +53,7 @@ public:
         auto it = store_.find(token);
         if (it == store_.end()) return std::nullopt;
         if (revision_ && revision_(it->second.username) != it->second.revision) return std::nullopt;
-        if (it->second.expires_at < std::chrono::steady_clock::now())
+        if (it->second.expires_at <= std::chrono::steady_clock::now())
             return std::nullopt;
         return it->second;
     }
@@ -59,6 +61,11 @@ public:
     void revoke(const std::string& token) {
         std::unique_lock lock(mutex_);
         store_.erase(token);
+    }
+
+    std::size_t size() const {
+        std::shared_lock lock(mutex_);
+        return store_.size();
     }
 
     void set_revision_validator(std::function<std::uint64_t(const std::string&)> f) { revision_ = std::move(f); }
