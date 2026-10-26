@@ -3,6 +3,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <functional>
+#include <mutex>
 
 namespace webengine {
 
@@ -36,7 +38,22 @@ namespace webengine {
 //   user on high ports (>=1024), so no root or capabilities are needed.
 class WebServerController {
 public:
+    struct TlsIdentity {
+        std::string certificate;
+        std::string private_key;
+        bool store_key = false;
+    };
     virtual ~WebServerController() = default;
+
+    // Compose a configuration transaction with lifecycle operations. Concrete
+    // controllers supporting runtime TLS take this same recursive lock in all
+    // lifecycle/configuration methods. Callbacks may invoke those methods.
+    void with_lifecycle_lock(const std::function<void()>& operation) const {
+        std::lock_guard lock(lifecycle_mutex_); operation();
+    }
+    // Optional runtime TLS support. verify runs after graceful reload while the
+    // lifecycle lock is held; throwing/failure restores the previous snippet.
+    virtual bool set_tls_identity(const TlsIdentity&, const std::function<bool()>& = {}) { return false; }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
     virtual bool on()    = 0;   // start the server if it is not already running
@@ -63,7 +80,9 @@ public:
     virtual bool          test_config() const = 0;   // server's own config validation
     virtual std::uint16_t http_port()   const = 0;
     virtual std::uint16_t https_port()  const = 0;
-    virtual const std::string& last_error() const = 0;
+    virtual std::string last_error() const = 0;
+protected:
+    mutable std::recursive_mutex lifecycle_mutex_;
 };
 
 // ── Factory ─────────────────────────────────────────────────────────────────

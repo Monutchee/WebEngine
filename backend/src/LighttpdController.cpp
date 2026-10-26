@@ -32,6 +32,7 @@ int LighttpdController::run(const std::vector<std::string>& args, bool capture) 
 
 bool LighttpdController::is_running() const
 {
+    std::lock_guard lock(lifecycle_mutex_);
     return proc::is_running(opts_.pidfile, "lighttpd");
 }
 
@@ -64,12 +65,14 @@ bool LighttpdController::write_listen_snippet()
 
 bool LighttpdController::test_config() const
 {
+    std::lock_guard lock(lifecycle_mutex_);
     // -tt: thorough preflight (loads modules) without binding any port.
     return run({"-tt", "-f", opts_.config}, /*capture=*/true) == 0;
 }
 
 bool LighttpdController::on()
 {
+    std::lock_guard lock(lifecycle_mutex_);
     if (is_running()) return true;
     if (!ensure_dirs())          return false;
     if (!write_listen_snippet()) return false;
@@ -93,6 +96,7 @@ bool LighttpdController::on()
 
 bool LighttpdController::off()
 {
+    std::lock_guard lock(lifecycle_mutex_);
     if (!is_running()) return true;
     // lighttpd has no `-s quit`; signal the master directly. SIGINT = graceful.
     long pid = proc::read_pid(opts_.pidfile);
@@ -102,6 +106,7 @@ bool LighttpdController::off()
 
 bool LighttpdController::reset()
 {
+    std::lock_guard lock(lifecycle_mutex_);
     if (is_running()) {
         if (!off()) return false;
         // Wait (up to ~5s) for the master to exit before starting a new one.
@@ -114,6 +119,7 @@ bool LighttpdController::reset()
 
 bool LighttpdController::reload()
 {
+    std::lock_guard lock(lifecycle_mutex_);
     // No graceful reload on the targeted platforms: validate, then restart. Bail
     // before touching the running server if the new config is invalid.
     if (!is_running()) { last_error_ = "lighttpd is not running"; return false; }
@@ -125,11 +131,13 @@ bool LighttpdController::reload()
 
 bool LighttpdController::set_listen_port(std::uint16_t http_port)
 {
+    std::lock_guard lock(lifecycle_mutex_);
     return set_listen_ports(http_port, opts_.https_port);
 }
 
 bool LighttpdController::set_listen_ports(std::uint16_t http_port, std::uint16_t https_port)
 {
+    std::lock_guard lock(lifecycle_mutex_);
     const std::uint16_t prev_http  = opts_.http_port;
     const std::uint16_t prev_https = opts_.https_port;
 
