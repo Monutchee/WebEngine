@@ -59,6 +59,8 @@ int main() {
     assert(!controller.set_tls_identity(a,[]{return false;})); assert(!controller.last_error().empty()); assert(wait_for(options.https_port,2));
     auto bad=b;bad.private_key=(root/"missing.key").string();assert(!controller.set_tls_identity(bad));assert(wait_for(options.https_port,2));
     bad=b;bad.private_key="x\"; include injected;\n";assert(!controller.set_tls_identity(bad));assert(wait_for(options.https_port,2));
+    std::ifstream previous_file(options.tls_file);std::string previous((std::istreambuf_iterator<char>(previous_file)),{});previous_file.close();
+    fs::remove(options.tls_file);assert(!controller.set_tls_identity(a));assert(wait_for(options.https_port,2));std::ofstream(options.tls_file)<<previous;
     std::promise<void> entered,release; auto released=release.get_future().share();
     auto activation=std::async(std::launch::async,[&]{return controller.set_tls_identity(a,[&]{entered.set_value();released.wait();return wait_for(options.https_port,1);});});
     entered.get_future().wait();

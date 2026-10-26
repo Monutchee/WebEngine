@@ -104,7 +104,7 @@ std::optional<WebServer> web_server_from_string(const std::string& name);
 std::unique_ptr<WebServerController> make_web_server_controller(WebServer kind);
 
 // Optional filesystem path overrides for non-default deployments — e.g. the
-// embedded target, where config/state live under /opt/monutchee/msys instead of
+// deployment where config/state live under /srv/example instead of
 // /etc. An empty field keeps that server's built-in default. The same struct maps
 // onto whichever server make_web_server_controller() builds (both NginxController
 // and LighttpdController share these four fields).

@@ -169,6 +169,10 @@ bool NginxController::set_tls_identity(const TlsIdentity& identity, const std::f
     std::error_code error;
     const bool existed = std::filesystem::exists(opts_.tls_file, error);
     if (error) { last_error_ = "cannot inspect previous TLS configuration"; return false; }
+    if (!existed && is_running()) {
+        last_error_ = "running proxy has no previous TLS snippet; restore configuration before activation";
+        return false;
+    }
     std::string previous;
     if (existed) {
         std::ifstream file(opts_.tls_file, std::ios::binary);
