@@ -163,8 +163,19 @@ bool NginxController::set_tls_identity(const TlsIdentity& identity, const std::f
     if (opts_.tls_file.empty()) { last_error_ = "TLS snippet path is not configured"; return false; }
     std::string content;
     try {
-        content = "ssl_certificate " + quoted_directive_value(identity.certificate) + ";\nssl_certificate_key " +
-            quoted_directive_value((identity.store_key ? "store:" : "") + identity.private_key) + ";\n";
+        const auto certificate = quoted_directive_value(identity.certificate);
+        const auto key = quoted_directive_value((identity.store_key ? "store:" : "") + identity.private_key);
+        if (identity.store_key && opts_.defer_store_keys) {
+            // A constant map is available before the HTTP rewrite phase and
+            // cannot be influenced by the client. A variable key also defers
+            // certificate loading to nginx's worker certificate callback.
+            content = "map \"\" $webengine_tls_private_key {\n    default " + key + ";\n}\n"
+                "ssl_certificate " + certificate + ";\n"
+                "ssl_certificate_key $webengine_tls_private_key;\n"
+                "ssl_certificate_cache max=2 inactive=10m valid=10m;\n";
+        } else {
+            content = "ssl_certificate " + certificate + ";\nssl_certificate_key " + key + ";\n";
+        }
     } catch (const std::invalid_argument& error) { last_error_ = error.what(); return false; }
     std::error_code error;
     const bool existed = std::filesystem::exists(opts_.tls_file, error);
