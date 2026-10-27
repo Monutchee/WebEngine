@@ -47,6 +47,11 @@ public:
         std::uint16_t http_port    = 8080;
         std::uint16_t https_port   = 8443;
         bool          https_enabled = true;
+        // Load store keys only during worker TLS handshakes, avoiding inherited
+        // provider/TPM sessions across fork. Requires nginx >= 1.29.0 and the
+        // tls_file include at http context (one controller per http context).
+        // Certificate paths and store URIs must change on identity rotation.
+        bool          defer_store_keys = false;
     };
 
     NginxController() = default;                                    // all Options defaults
