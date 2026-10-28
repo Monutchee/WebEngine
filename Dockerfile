@@ -34,6 +34,24 @@ RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
     && cmake --build build --parallel "$(nproc)"
 
+# Build the same reviewed nginx release used by integration checks.
+FROM debian:bookworm-slim AS proxy-builder
+ARG NGINX_VERSION=1.30.6
+ARG NGINX_SHA256=3cf46f5ed7504d460125866b7bea99fb357f31d887e2e63b35503310e9b8b6c8
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates curl libpcre2-dev libssl-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl --fail --location --proto '=https' --tlsv1.2 \
+        "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" -o /tmp/nginx.tar.gz \
+    && echo "${NGINX_SHA256}  /tmp/nginx.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/nginx.tar.gz -C /tmp \
+    && cd "/tmp/nginx-${NGINX_VERSION}" \
+    && ./configure --prefix=/etc/nginx --sbin-path=/usr/sbin/nginx \
+        --conf-path=/etc/nginx/nginx.conf --pid-path=/tmp/nginx.pid \
+        --error-log-path=stderr --http-log-path=/dev/stdout \
+        --with-http_ssl_module --with-http_v2_module --with-http_auth_request_module \
+    && make -j2 && make install
+
 # ── Stage 2: slim runtime with both reverse proxies ───────────────────────────
 # Installs BOTH nginx and lighttpd; the backend drives exactly ONE of them per
 # run, chosen by WEBENGINE_WEBSERVER (see entrypoint.sh / docker-compose). No
@@ -42,13 +60,17 @@ RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        nginx \
+        libpcre2-8-0 \
+        zlib1g \
         lighttpd \
         lighttpd-mod-openssl \
         libssl3 \
         openssl \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/nginx/sites-enabled/default
+
+COPY --from=proxy-builder /usr/sbin/nginx /usr/sbin/nginx
+COPY --from=proxy-builder /etc/nginx/mime.types /etc/nginx/mime.types
 
 # Self-signed TLS certificate (PoC only), shared by both servers.
 # For the embedded target, replace server.crt / server.key with a real certificate
@@ -86,7 +108,7 @@ RUN chown -R www-data:www-data \
         /etc/nginx/conf.d /etc/nginx/ssl \
         /etc/lighttpd/conf.d /etc/lighttpd/ssl \
     && chmod 640 /etc/nginx/ssl/server.key /etc/lighttpd/ssl/server.pem \
-    && mkdir -p /tmp/nginx /tmp/lighttpd \
+    && mkdir -p /tmp/nginx /tmp/lighttpd /var/lib/nginx \
     && chown www-data:www-data /tmp/nginx /tmp/lighttpd /var/lib/nginx 2>/dev/null || true
 
 # High ports each server binds as a non-root user (see conf.d/listen.conf). The

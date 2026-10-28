@@ -43,9 +43,15 @@ public:
         std::string pidfile     = "/tmp/nginx.pid";              // must match `pid` in config
         std::string listen_file = "/etc/nginx/conf.d/listen.conf";// generated snippet
         std::string temp_root   = "/tmp/nginx";                  // temp dirs ensured before start
+        std::string tls_file; // optional generated ssl_certificate/key snippet
         std::uint16_t http_port    = 8080;
         std::uint16_t https_port   = 8443;
         bool          https_enabled = true;
+        // Load store keys only during worker TLS handshakes, avoiding inherited
+        // provider/TPM sessions across fork. Requires nginx >= 1.29.0 and the
+        // tls_file include at http context (one controller per http context).
+        // Certificate paths and store URIs must change on identity rotation.
+        bool          defer_store_keys = false;
     };
 
     NginxController() = default;                                    // all Options defaults
@@ -66,14 +72,15 @@ public:
     // new config fails validation.
     bool set_listen_port(std::uint16_t http_port) override;
     bool set_listen_ports(std::uint16_t http_port, std::uint16_t https_port) override;
+    bool set_tls_identity(const TlsIdentity&, const std::function<bool()>& verify = {}) override;
 
     // ── Introspection ─────────────────────────────────────────────────────────────
     bool          is_running()  const override;   // pidfile present and process alive
     bool          test_config() const override;   // nginx -t
-    std::uint16_t http_port()   const override { return opts_.http_port; }
-    std::uint16_t https_port()  const override { return opts_.https_port; }
+    std::uint16_t http_port()   const override { std::lock_guard lock(lifecycle_mutex_); return opts_.http_port; }
+    std::uint16_t https_port()  const override { std::lock_guard lock(lifecycle_mutex_); return opts_.https_port; }
 
-    const std::string& last_error() const override { return last_error_; }
+    std::string last_error() const override { std::lock_guard lock(lifecycle_mutex_); return last_error_; }
 
 private:
     bool ensure_dirs();

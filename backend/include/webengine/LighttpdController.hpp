@@ -83,10 +83,10 @@ public:
     // ── Introspection ─────────────────────────────────────────────────────────────
     bool          is_running()  const override;   // pidfile present and process alive
     bool          test_config() const override;   // lighttpd -tt -f <config>
-    std::uint16_t http_port()   const override { return opts_.http_port; }
-    std::uint16_t https_port()  const override { return opts_.https_port; }
+    std::uint16_t http_port()   const override { std::lock_guard lock(lifecycle_mutex_); return opts_.http_port; }
+    std::uint16_t https_port()  const override { std::lock_guard lock(lifecycle_mutex_); return opts_.https_port; }
 
-    const std::string& last_error() const override { return last_error_; }
+    std::string last_error() const override { std::lock_guard lock(lifecycle_mutex_); return last_error_; }
 
 private:
     bool ensure_dirs();
