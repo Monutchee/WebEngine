@@ -94,6 +94,12 @@ if(WEBENGINE_BUILD_EXAMPLE)
 endif()
 
 if(WEBENGINE_BUILD_TESTS)
+    add_executable(webengine_token_store_test tests/token_store_test.cpp)
+    target_include_directories(webengine_token_store_test PRIVATE src)
+    target_link_libraries(webengine_token_store_test PRIVATE webengine::webengine)
+    target_compile_options(webengine_token_store_test PRIVATE -UNDEBUG)
+    add_test(NAME webengine_token_store COMMAND webengine_token_store_test)
+
     add_executable(webengine_streaming_download_test
         tests/streaming_download_test.cpp)
     target_link_libraries(webengine_streaming_download_test
@@ -125,4 +131,12 @@ if(BUILD_TESTING AND WEBENGINE_BUILD_TESTS)
     target_compile_options(webengine_websocket_test PRIVATE -Wall -Wextra -Wpedantic -UNDEBUG)
     add_test(NAME webengine_websocket COMMAND webengine_websocket_test)
     set_tests_properties(webengine_websocket PROPERTIES TIMEOUT 20 LABELS security-compat)
+endif()
+
+if(BUILD_TESTING AND WEBENGINE_BUILD_TESTS)
+    add_executable(webengine_nginx_tls_test tests/nginx_tls_test.cpp)
+    target_link_libraries(webengine_nginx_tls_test PRIVATE webengine::webengine)
+    target_compile_options(webengine_nginx_tls_test PRIVATE -Wall -Wextra -Wpedantic -UNDEBUG)
+    add_test(NAME webengine_nginx_tls COMMAND webengine_nginx_tls_test)
+    set_tests_properties(webengine_nginx_tls PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
 endif()
