@@ -133,6 +133,16 @@ reader with monotonic offsets and sends a fixed-length response without first
 assembling the object in a Beast `string_body`. Product code remains responsible
 for validating the file contents and forwarding them to its owning service.
 
+Authenticated streamed downloads revalidate the session before headers and each
+bounded read/write, including after the reader returns. A handler may supply
+`StreamingDownload::authorized`; it is combined with credential revalidation.
+False or an exception closes the connection, so a partial response may already
+have reached the client. These callbacks must be bounded and nonblocking.
+Credential policies that replace a principal must also replace
+`RequestContext::authorized` with a revalidator for that credential and its role.
+Authenticated streams without a credential revalidator return 503. Public
+streams retain their behavior and may optionally supply a handler predicate.
+
 ### Reverse-proxy control (`WebServerController`)
 
 The backend **owns its reverse proxy**: it starts, stops, restarts and re-ports
@@ -262,6 +272,7 @@ Build with `WEBENGINE_BUILD_TESTS=ON` and run CTest `webengine_websocket` for re
 Unix-socket upgrade, authentication, origin, revocation and queue tests.
 
 Credential providers may return a cached session revision; changing it invalidates existing sessions, including live WebSockets. Product credential policy runs before route authorization and may admit scoped integration credentials or reject restricted sessions. Explicit Authorization takes precedence over cookies. HTTP handlers run in a bounded two-worker dispatch pool (64 outstanding requests), keeping password hashing off transport threads. Providers and handlers must support concurrent calls. Destruction joins dispatch workers before destroying routing/transport state; stop/run restart retains the pool. Forwarded scheme is trusted only on the Unix listener; HTTPS responses issue Secure session cookies.
+
 
 ## License
 

@@ -115,6 +115,7 @@ void Session::do_write(StreamingDownload download, unsigned version,
     auto self = shared_from_this();
     auto state = std::make_shared<StreamingState>(
         std::move(download), version, keep_alive);
+    if (!stream_authorized(state->download)) return;
     http::async_write_header(socket_, state->serializer,
         [self, state](beast::error_code ec, std::size_t)
         {
@@ -127,9 +128,20 @@ void Session::do_write(StreamingDownload download, unsigned version,
         });
 }
 
+bool Session::stream_authorized(const StreamingDownload& download)
+{
+    try {
+        if (!download.authorized || download.authorized()) return true;
+    } catch (...) {}
+    beast::error_code ignored;
+    socket_.close(ignored);
+    return false;
+}
+
 void Session::do_write_stream(
     const std::shared_ptr<StreamingState>& state)
 {
+    if (!stream_authorized(state->download)) return;
     if (!state->buffer_loaded) {
         if (state->offset == state->download.content_length) {
             state->response.body().data = nullptr;
@@ -159,6 +171,7 @@ void Session::do_write_stream(
     }
 
     auto self = shared_from_this();
+    if (!stream_authorized(state->download)) return;
     http::async_write_some(socket_, state->serializer,
         [self, state](beast::error_code ec, std::size_t)
         {

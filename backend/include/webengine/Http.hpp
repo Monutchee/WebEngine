@@ -28,6 +28,9 @@ struct RequestContext {
     const Request& request;          // the raw incoming request
     std::optional<UserInfo> user;    // the authenticated user, set iff the
                                      // route declared a minimum role
+    // Credential policies replacing the principal must replace this nonblocking
+    // revalidator too. Required for authenticated streams without a session.
+    std::function<bool()> authorized{};
 };
 
 // Product credential policy runs for every matched request, before role checks.
@@ -66,6 +69,8 @@ struct StreamingDownload {
     std::string content_type{"application/octet-stream"};
     std::uint64_t content_length{};
     std::function<std::size_t(std::uint64_t, std::span<std::byte>)> read;
+    // Nonblocking; false or exception closes the response before further writes.
+    std::function<bool()> authorized{};
 };
 
 using FileUploadHandler = std::function<Response(
