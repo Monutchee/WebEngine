@@ -99,7 +99,9 @@ struct WebSocketUpgrade {
     std::function<std::shared_ptr<void>(std::shared_ptr<WebSocketSink>)> attach;
     // Called on the transport strand; must validate/enqueue without blocking.
     std::function<void(std::shared_ptr<WebSocketSink>, std::string)> receive;
-    std::function<bool()> authorized; // installed by authenticated routing
+    // Nonblocking and thread-safe: checked by producers and transport delivery.
+    // Authenticated routing composes this product gate with credential validity.
+    std::function<bool()> authorized;
     std::shared_ptr<void> reservation; // route-level connection limit
 };
 using HandlerResult = std::variant<Response, StreamingDownload, WebSocketUpgrade>;

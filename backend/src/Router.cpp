@@ -151,10 +151,14 @@ HandlerResult Router::dispatch(const Request& req) const
                 }
                 return attach(std::move(sink));
             };
-            const auto token = extract_token(req);
-            upgrade->authorized = [this, token, required = *min_role] {
-                try { const auto entry = tokens_.validate(token);
-                return entry && role_satisfies(entry->role, required); } catch (...) { return false; }
+            if (!ctx.authorized)
+                return json(http::status::service_unavailable,
+                    R"({"error":"stream credential revalidation unavailable"})");
+            auto product_authorized = std::move(upgrade->authorized);
+            upgrade->authorized = [credential = std::move(ctx.authorized),
+                                   product = std::move(product_authorized)] {
+                try { return credential() && (!product || product()); }
+                catch (...) { return false; }
             };
         }
         return result;

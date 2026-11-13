@@ -58,6 +58,102 @@ void established_expiry() {
     server.join(); std::filesystem::remove(path);
 }
 
+// The attachment runs on the strand. Revoking before it returns makes queued
+// delivery deterministic: the posted flush cannot run until authority is false.
+void delivery_cutoff(int mode) {
+    using Protocol = boost::asio::local::stream_protocol;
+    boost::asio::io_context ioc;
+    std::atomic<bool> valid{true};
+    std::atomic<int> received{0};
+    const auto path = "/tmp/webengine-ws-cutoff-" + std::to_string(::getpid()) + ".sock";
+    Protocol::acceptor listener(ioc, Protocol::endpoint(path));
+    listener.async_accept([&](auto error, auto socket) {
+        require(!error, "cutoff accept");
+        auto peer = std::make_shared<Protocol::socket>(std::move(socket));
+        auto buffer = std::make_shared<boost::beast::flat_buffer>();
+        auto request = std::make_shared<Request>();
+        http::async_read(*peer, *buffer, *request, [&, peer, buffer, request](auto error, std::size_t) {
+            require(!error, "cutoff handshake request");
+            WebSocketUpgrade upgrade;
+            upgrade.authorized = [&] { return valid.load(); };
+            upgrade.receive = [&](auto, auto) { ++received; };
+            upgrade.attach = [&](auto sink) {
+                if (mode == 0) {
+                    sink->send_control("queued-control");
+                    sink->send_keyed("topic", "queued-snapshot");
+                    valid = false;
+                } else if (mode == 4) {
+                    sink->send_latest("initial");
+                } else {
+                    valid = false;
+                    if (mode == 1) sink->send_latest("denied-snapshot");
+                    if (mode == 2) sink->send_control("denied-control");
+                    if (mode == 3) sink->send_if_idle("denied-heartbeat");
+                }
+                return std::shared_ptr<void>{};
+            };
+            std::make_shared<WebSocketSession>(std::move(*peer), std::move(upgrade))->run(std::move(*request));
+        });
+    });
+    std::thread server([&] { ioc.run(); });
+    try {
+        boost::asio::io_context client_ioc;
+        boost::beast::websocket::stream<Protocol::socket> client(client_ioc);
+        client.next_layer().connect(Protocol::endpoint(path));
+        client.handshake("device", "/stream");
+        boost::beast::flat_buffer buffer;
+        if (mode == 4) {
+            client.read(buffer);
+            require(boost::beast::buffers_to_string(buffer.data()) == "initial", "receive initial");
+            buffer.consume(buffer.size());
+            valid = false;
+            client.write(boost::asio::buffer(std::string("denied-command")));
+        }
+        boost::system::error_code error; client.read(buffer, error);
+        require(error == boost::beast::websocket::error::closed, "cutoff drops pending/new output");
+        require(client.reason().code == boost::beast::websocket::close_code::policy_error, "cutoff close1008");
+        require(received == 0, "cutoff prevents command dispatch");
+    } catch (...) { ioc.stop(); server.join(); std::filesystem::remove(path); throw; }
+    server.join(); std::filesystem::remove(path);
+}
+
+void policy_composition() {
+    TokenStore tokens;
+    Router router(tokens);
+    bool credential = true, product = true, throws = false;
+    router.set_credential_policy([&](auto& context) -> std::optional<Response> {
+        context.user = UserInfo{"integration", Role::Viewer};
+        context.authorized = [&] { return credential; };
+        return {};
+    });
+    router.add_route(http::verb::get, "/stream", [&](const auto&) -> HandlerResult {
+        WebSocketUpgrade value;
+        value.attach = [](auto) { return std::shared_ptr<void>{}; };
+        value.authorized = [&] { if (throws) throw std::runtime_error("authority unavailable"); return product; };
+        return value;
+    }, Role::Viewer);
+    Request request{http::verb::get, "/stream", 11};
+    request.set(http::field::cookie, "session=" + tokens.issue("viewer", Role::Viewer));
+    auto upgrade = std::get<WebSocketUpgrade>(router.dispatch(request));
+    require(upgrade.authorized(), "policy credential admitted without session token");
+    credential = false; require(!upgrade.authorized(), "policy credential revoked");
+    credential = true; product = false; require(!upgrade.authorized(), "product gate revoked");
+    product = true; require(upgrade.authorized(), "both gates required");
+    throws = true; require(!upgrade.authorized(), "authority exception fails closed");
+    throws = false;
+    router.set_credential_policy([](auto& context) -> std::optional<Response> {
+        context.user = UserInfo{"integration", Role::Viewer};
+        return {};
+    });
+    require(std::get<Response>(router.dispatch(request)).result() == http::status::service_unavailable,
+        "replacement principal without revalidator fails closed");
+    router.add_route(http::verb::get, "/public", [](const auto&) -> HandlerResult {
+        return WebSocketUpgrade{};
+    }, std::nullopt);
+    require(std::get<Response>(router.dispatch(Request{http::verb::get, "/public", 11})).result() == http::status::forbidden,
+        "unauthenticated websocket policy preserved");
+}
+
 void dispatch_shutdown() {
     TokenStore tokens;
     auto router = std::make_unique<Router>(tokens);
@@ -80,6 +176,8 @@ void dispatch_shutdown() {
 
 }
 int main() {
+    policy_composition();
+    for (int mode = 0; mode < 5; ++mode) delivery_cutoff(mode);
     dispatch_shutdown();
     Request origin{http::verb::get, "/stream", 11};
     origin.set(http::field::host, "device:8443"); origin.set("X-Forwarded-Proto", "https");
