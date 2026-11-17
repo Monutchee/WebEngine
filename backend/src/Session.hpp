@@ -30,6 +30,7 @@ private:
     void do_write(StreamingDownload download, unsigned version,
                   bool keep_alive);
     void do_write_stream(const std::shared_ptr<StreamingState>& state);
+    bool stream_authorized(const StreamingDownload& download);
     void finish_write(bool keep_alive);
 
     uds::socket        socket_;

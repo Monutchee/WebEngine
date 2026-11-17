@@ -28,6 +28,9 @@ struct RequestContext {
     const Request& request;          // the raw incoming request
     std::optional<UserInfo> user;    // the authenticated user, set iff the
                                      // route declared a minimum role
+    // Credential policies replacing the principal must replace this nonblocking
+    // revalidator too. Required for authenticated streams without a session.
+    std::function<bool()> authorized{};
 };
 
 // Product credential policy runs for every matched request, before role checks.
@@ -66,6 +69,8 @@ struct StreamingDownload {
     std::string content_type{"application/octet-stream"};
     std::uint64_t content_length{};
     std::function<std::size_t(std::uint64_t, std::span<std::byte>)> read;
+    // Nonblocking; false or exception closes the response before further writes.
+    std::function<bool()> authorized{};
 };
 
 using FileUploadHandler = std::function<Response(
@@ -94,7 +99,9 @@ struct WebSocketUpgrade {
     std::function<std::shared_ptr<void>(std::shared_ptr<WebSocketSink>)> attach;
     // Called on the transport strand; must validate/enqueue without blocking.
     std::function<void(std::shared_ptr<WebSocketSink>, std::string)> receive;
-    std::function<bool()> authorized; // installed by authenticated routing
+    // Nonblocking and thread-safe: checked by producers and transport delivery.
+    // Authenticated routing composes this product gate with credential validity.
+    std::function<bool()> authorized;
     std::shared_ptr<void> reservation; // route-level connection limit
 };
 using HandlerResult = std::variant<Response, StreamingDownload, WebSocketUpgrade>;

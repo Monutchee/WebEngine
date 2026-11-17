@@ -90,10 +90,26 @@ HandlerResult Router::dispatch(const Request& req) const
     }
 
     RequestContext ctx{req, std::nullopt};
+    std::optional<UserInfo> session_user;
+    std::function<bool()> session_authorized;
 
     try {
-        if (auto entry = validated_token(req, tokens_)) ctx.user = UserInfo{entry->username, entry->role};
+        if (auto entry = validated_token(req, tokens_)) {
+            session_user = UserInfo{entry->username, entry->role};
+            ctx.user = session_user;
+            session_authorized = [this, token = extract_token(req), min_role] {
+                const auto current = tokens_.validate(token);
+                return current && (!min_role || role_satisfies(current->role, *min_role));
+            };
+        }
         if (credential_policy) if (auto denial = credential_policy(ctx)) return *denial;
+        // A mutable credential policy may replace the authenticated principal.
+        // Only the unchanged session identity may inherit its session validator;
+        // an explicit policy validator always takes precedence.
+        if (!ctx.authorized && session_user && ctx.user &&
+            ctx.user->username == session_user->username &&
+            ctx.user->role == session_user->role)
+            ctx.authorized = std::move(session_authorized);
     } catch (...) { return json(http::status::service_unavailable, R"({"error":"authentication unavailable"})"); }
     if (min_role) {
         if (!ctx.user) {
@@ -110,6 +126,17 @@ HandlerResult Router::dispatch(const Request& req) const
     // it and report 500 instead.
     try {
         auto result = handler(ctx);
+        if (auto* download = std::get_if<StreamingDownload>(&result); download && min_role) {
+            if (!ctx.authorized)
+                return json(http::status::service_unavailable,
+                    R"({"error":"stream credential revalidation unavailable"})");
+            auto product_authorized = std::move(download->authorized);
+            download->authorized = [credential = std::move(ctx.authorized),
+                                    product = std::move(product_authorized)] {
+                try { return credential() && (!product || product()); }
+                catch (...) { return false; }
+            };
+        }
         if (auto* upgrade = std::get_if<WebSocketUpgrade>(&result)) {
             if (!min_role) return text(http::status::forbidden, "WebSocket requires authentication");
             std::uint64_t generation;
@@ -124,10 +151,14 @@ HandlerResult Router::dispatch(const Request& req) const
                 }
                 return attach(std::move(sink));
             };
-            const auto token = extract_token(req);
-            upgrade->authorized = [this, token, required = *min_role] {
-                try { const auto entry = tokens_.validate(token);
-                return entry && role_satisfies(entry->role, required); } catch (...) { return false; }
+            if (!ctx.authorized)
+                return json(http::status::service_unavailable,
+                    R"({"error":"stream credential revalidation unavailable"})");
+            auto product_authorized = std::move(upgrade->authorized);
+            upgrade->authorized = [credential = std::move(ctx.authorized),
+                                   product = std::move(product_authorized)] {
+                try { return credential() && (!product || product()); }
+                catch (...) { return false; }
             };
         }
         return result;

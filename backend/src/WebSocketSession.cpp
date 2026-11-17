@@ -19,6 +19,7 @@ void WebSocketSession::deactivate() {
         asio::post(strand_, [self = shared_from_this()] { self->stop(); });
 }
 void WebSocketSession::send_if_idle(std::string message) {
+    if (!authorized()) { terminate(1008); return; }
     std::lock_guard lock(mutex_);
     if (!active() || scheduled_ || message.size() > 256u * 1024u) return;
     pending_bytes_ += message.size();
@@ -60,6 +61,7 @@ void WebSocketSession::discard_key(std::string_view key) {
     std::erase(ready_, std::string(key));
 }
 void WebSocketSession::send_keyed(std::string key, std::string message) {
+    if (!authorized()) { terminate(1008); return; }
     std::unique_lock lock(mutex_);
     if (!active()) return;
     if (message.size() > 256u * 1024u) { lock.unlock(); terminate(1009); return; }
@@ -78,6 +80,7 @@ void WebSocketSession::send_keyed(std::string key, std::string message) {
     asio::post(strand_, [self = shared_from_this()] { self->flush(); });
 }
 void WebSocketSession::send_control(std::string message) {
+    if (!authorized()) { terminate(1008); return; }
     std::unique_lock lock(mutex_);
     if (!active()) return;
     if (controls_.size() >= 64 || message.size() > 256u * 1024u ||
@@ -91,6 +94,7 @@ void WebSocketSession::send_control(std::string message) {
 }
 void WebSocketSession::flush() {
     if (!active() || writing_ || closing_) return;
+    if (!authorized()) { close(ws::close_code::policy_error); return; }
     auto message = std::make_shared<std::string>();
     {
         std::lock_guard lock(mutex_);
@@ -116,6 +120,7 @@ void WebSocketSession::read() {
     stream_.async_read(incoming_, asio::bind_executor(strand_,
         [self = shared_from_this()](auto error, std::size_t) {
             if (error) { self->stop(); return; }
+            if (!self->authorized()) { self->close(ws::close_code::policy_error); return; }
             if (!self->stream_.got_text() || !self->upgrade_.receive) {
                 self->close(ws::close_code::unknown_data); return;
             }
@@ -126,11 +131,13 @@ void WebSocketSession::read() {
             if (self->active()) self->read();
         }));
 }
+bool WebSocketSession::authorized() const {
+    try { return upgrade_.authorized && upgrade_.authorized(); }
+    catch (...) { return false; }
+}
 void WebSocketSession::check_authority() {
     if (!active() || closing_) return;
-    bool valid = false;
-    try { valid = upgrade_.authorized && upgrade_.authorized(); } catch (...) {}
-    if (!valid) { close(ws::close_code::policy_error); return; }
+    if (!authorized()) { close(ws::close_code::policy_error); return; }
     timer_.expires_after(1s);
     timer_.async_wait(asio::bind_executor(strand_, [self = shared_from_this()](auto error) {
         if (!error) self->check_authority();
@@ -142,6 +149,10 @@ void WebSocketSession::close(ws::close_code code) {
         closing_ = true;
         close_code_ = code;
         active_ = false;
+        {
+            std::lock_guard lock(mutex_);
+            pending_.clear(); ready_.clear(); controls_.clear(); pending_bytes_ = 0;
+        }
         attachment_.reset();
         timer_.cancel();
         close_timer_.expires_after(2s);

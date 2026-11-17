@@ -28,6 +28,7 @@ public:
 private:
     void read();
     void flush();
+    bool authorized() const;
     void check_authority();
     void close(boost::beast::websocket::close_code code);
     void stop();
